@@ -1,0 +1,15 @@
+# ROS 2 编译生成文件
+build/
+install/
+log/
+# C/C++ 临时文件
+*.o
+*.so
+*.out
+*.a
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
