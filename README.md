@@ -58,4 +58,44 @@
 *   📫 邮箱: [1669147330@qq.com]
 *   💼 欢迎联系我交流技术或提供工作机会！
 ---
+```mermaid
+graph TD
+    classDef sim fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef px4 fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
+    classDef bridge fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
+    classDef ros fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px;
+
+    subgraph "Level 1: 物理世界仿真层 (底层)"
+        Gazebo["Gazebo 3D物理引擎<br>提供重力,风场,碰撞"]:::sim
+        Sensors["虚拟传感器<br>RGB-D相机, IMU, GPS"]:::sim
+        Gazebo --- Sensors
+    end
+
+    subgraph "Level 2: PX4 飞控层 (小脑 - 负责平衡与底层姿态)"
+        PX4_SITL["PX4 固件核心<br>(软件在环仿真)"]:::px4
+        uORB[("uORB 内部消息总线")]:::px4
+        Sensors -->|"传感器原始数据"| PX4_SITL
+        PX4_SITL -->|"电机转速 PWM"| Gazebo
+        PX4_SITL <--> uORB
+    end
+
+    subgraph "Level 3: 通信桥梁层 (中枢神经)"
+        DDS(("Micro XRCE-DDS<br>翻译官")):::bridge
+        uORB <-->|"打包加密"| DDS
+    end
+
+    subgraph "Level 4: ROS 2 高级控制层 (大脑)"
+        PX4_MSGS[["px4_msgs 字典库"]]:::ros
+        DDS <-->|"解包转为 ROS Topic"| PX4_MSGS
+        
+        Node1("Offboard 控制与状态机节点<br>发送起飞、巡航轨迹"):::ros
+        Node2("TFLite 边缘视觉 AI 节点<br>识别裂缝/缺陷"):::ros
+        Node3("TF2 坐标转换与 3D 定位节点<br>将像素转为世界坐标"):::ros
+        
+        PX4_MSGS <-->|"听取位置 / 下发指令"| Node1
+        Gazebo -.->|"/camera/image_raw"| Node2
+        Node2 -->|"输出 2D 目标框"| Node3
+        Node1 -->|"提供相机实时空间位置"| Node3
+    end
+```
 *If you like this project, please give it a ⭐!*
