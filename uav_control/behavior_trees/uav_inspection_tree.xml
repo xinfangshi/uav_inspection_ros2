@@ -1,0 +1,11 @@
+<root BTCPP_format="4">
+    <BehaviorTree ID="MainTree">
+        <!-- 顺序节点 -->
+        <Sequence name="UAV_Inspection_Mission">
+            
+            <!-- 1. 起飞到 5米 (我们今天唯一写了 C++ 实现的节点) -->
+            <Takeoff target_altitude="5.0"/>
+            
+        </Sequence>
+    </BehaviorTree>
+</root>
