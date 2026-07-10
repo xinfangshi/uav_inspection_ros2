@@ -37,7 +37,7 @@
 
 - [x] **Phase 0**: 项目立项，仓库构建与架构设计。
 - [x] **Phase 1**: 环境搭建 (Ubuntu 26.04, ROS 2 Lyrical) 与 PX4 SITL + Gazebo 物理仿真环境跑通。
-- [ ] **Phase 2**: Micro XRCE-DDS 通信链路建立，获取高频里程计与传感器数据。
+- [x] **Phase 2**: Micro XRCE-DDS 通信链路建立，获取高频里程计与传感器数据,并且编写 C++ Offboard 节点，破解飞控 GCS 断连保护，成功实现代码级解锁起飞。
 - [ ] **Phase 3**: 引入 BehaviorTree.CPP 构建状态机，实现基于 Minimum Snap 的 3D 轨迹自动生成与 Offboard 控制。
 - [ ] **Phase 4**: C++ 环境下 TensorFlow Lite 节点的集成，YOLO/SSD 模型 INT8 量化与实时 2D 缺陷检测。
 - [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
