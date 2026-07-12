@@ -5,38 +5,102 @@ namespace uav_control
 namespace behavior_trees
 {
 
-TakeoffAction::TakeoffAction(const std::string& name, const BT::NodeConfig& config)
-    : BT::SyncActionNode(name, config)
+// 构造函数：接收 node 并初始化 Publishers
+TakeoffAction::TakeoffAction(const std::string& name, const BT::NodeConfig& config, rclcpp::Node::SharedPtr node)
+    : BT::StatefulActionNode(name, config), node_(node)
 {
-    // 这里可以进行初始化，比如从 config 中提取 ROS 2 的 Node 指针 (后续我们再深度集成)
+    // 利用传入的 node_ 指针，创建话题发布者
+    offboard_control_mode_publisher_ = node_->create_publisher<px4_msgs::msg::OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
+    trajectory_setpoint_publisher_ = node_->create_publisher<px4_msgs::msg::TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
+    vehicle_command_publisher_ = node_->create_publisher<px4_msgs::msg::VehicleCommand>("/fmu/in/vehicle_command", 10);
 }
 
 BT::PortsList TakeoffAction::providedPorts()
 {
-    // 对应我们 XML 里写的: <Takeoff target_altitude="5.0"/>
-    // 定义一个输入端口 "target_altitude"，类型为 double
     return { BT::InputPort<double>("target_altitude") };
 }
 
-BT::NodeStatus TakeoffAction::tick()
+// 行为树第一次执行到该节点时调用
+BT::NodeStatus TakeoffAction::onStart()
 {
-    double altitude = 0.0;
-    
-    // 从 XML 或黑板中读取 target_altitude 的值
-    if (!getInput("target_altitude", altitude))
-    {
-        // 如果读取失败（比如 XML 里没写这个属性），抛出异常
-        throw BT::RuntimeError("TakeoffAction 节点缺少 'target_altitude' 参数!");
+    setpoint_counter_ = 0;
+    RCLCPP_INFO(node_->get_logger(), "[Takeoff] ✈️ 起飞节点激活，开始预热 Offboard 信号...");
+    return BT::NodeStatus::RUNNING; // 告诉行为树：我还没干完，下次继续叫我 (Tick)
+}
+
+// 行为树持续 Tick 时调用（相当于原来的 timer_callback）
+BT::NodeStatus TakeoffAction::onRunning()
+{
+    double altitude = 5.0; // 默认 5 米
+    getInput("target_altitude", altitude);
+
+    // 1. 发送心跳和目标高度 (NED 坐标系，高度向下为正，所以乘 -1)
+    publish_offboard_control_mode();
+    publish_trajectory_setpoint(-altitude);
+
+    // 2. 预热 50 次 (如果执行器频率是 50Hz，就是 1 秒) 后解锁起飞
+    if (setpoint_counter_ == 50) {
+        publish_vehicle_command(px4_msgs::msg::VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
+        arm();
     }
 
-    // --- 这里是我们后续要接入的具体 ROS 2 PX4 起飞代码 ---
-    // RCLCPP_INFO(rclcpp::get_logger("TakeoffAction"), "接收到起飞指令，目标高度: %.2f 米", altitude);
-    
-    // 这里简单用 std::cout 模拟打印 (因为还没集成 rclcpp logger)
-    std::cout << "[BT NODE: Takeoff] 🚀 正在执行起飞，目标高度: " << altitude << " 米" << std::endl;
+    setpoint_counter_++;
 
-    // 返回 SUCCESS，告诉行为树：起飞动作完成，你可以去执行下一个节点了！
-    return BT::NodeStatus::SUCCESS;
+    // 3. 模拟起飞过程，假设发了 200 次指令（大概 4 秒），我们认为它飞到了
+    // (真正完美的做法是订阅里程计，判断实际高度是否达到 altitude，我们后续再优化)
+    if (setpoint_counter_ > 200) {
+        RCLCPP_INFO(node_->get_logger(), "[Takeoff] ✅ 起飞完成，到达指定高度！");
+        return BT::NodeStatus::SUCCESS; // 告诉行为树：我干完了，你可以执行下一个节点了！
+    }
+
+    return BT::NodeStatus::RUNNING; // 还没到 200 次，继续保持 RUNNING
+}
+
+void TakeoffAction::onHalted()
+{
+    RCLCPP_WARN(node_->get_logger(), "[Takeoff] ⚠️ 起飞被强行中断！");
+}
+
+void TakeoffAction::arm()
+{
+    publish_vehicle_command(px4_msgs::msg::VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
+    RCLCPP_INFO(node_->get_logger(), "[Takeoff] ⚔️ 发送解锁(Arm)指令!");
+}
+
+void TakeoffAction::publish_offboard_control_mode()
+{
+    px4_msgs::msg::OffboardControlMode msg{};
+    msg.position = true;
+    msg.velocity = false;
+    msg.acceleration = false;
+    msg.attitude = false;
+    msg.body_rate = false;
+    msg.timestamp = node_->get_clock()->now().nanoseconds() / 1000;
+    offboard_control_mode_publisher_->publish(msg);
+}
+
+void TakeoffAction::publish_trajectory_setpoint(float altitude)
+{
+    px4_msgs::msg::TrajectorySetpoint msg{};
+    msg.position = {0.0, 0.0, altitude};
+    msg.yaw = 0.0; 
+    msg.timestamp = node_->get_clock()->now().nanoseconds() / 1000;
+    trajectory_setpoint_publisher_->publish(msg);
+}
+
+void TakeoffAction::publish_vehicle_command(uint16_t command, float param1, float param2)
+{
+    px4_msgs::msg::VehicleCommand msg{};
+    msg.param1 = param1;
+    msg.param2 = param2;
+    msg.command = command;
+    msg.target_system = 1;
+    msg.target_component = 1;
+    msg.source_system = 1;
+    msg.source_component = 1;
+    msg.from_external = true;
+    msg.timestamp = node_->get_clock()->now().nanoseconds() / 1000;
+    vehicle_command_publisher_->publish(msg);
 }
 
 } // namespace behavior_trees

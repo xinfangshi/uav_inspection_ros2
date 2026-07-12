@@ -1,9 +1,8 @@
-
 # 🚁 Autonomous UAV Infrastructure Inspection & Defect 3D Localization System 
 **(基于边缘AI与ROS 2的无人机自主基建巡检与缺陷3D定位系统)**
 
 ![ROS 2](https://img.shields.io/badge/ROS%202-Lyrical-34ce57?style=flat&logo=ros)
-![Ubuntu](https://img.shields.io/badge/Ubuntu-26.04%20LTS-E95420?style=flat&logo=ubuntu)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420?style=flat&logo=ubuntu)
 ![PX4](https://img.shields.io/badge/PX4-Autopilot-0242a9?style=flat)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow%20Lite-C++-FF6F00?style=flat&logo=tensorflow)
 ![C++](https://img.shields.io/badge/C++-17%2F20-blue?style=flat&logo=c%2B%2B)
@@ -22,42 +21,6 @@
 - **🎯 2D 到 3D 的概率融合定位**：维护高频 `World -> Drone -> Gimbal -> Camera` TF 树，通过 3D 射线投射 (Ray-Casting) 反解空间坐标，并引入 `EKF (扩展卡尔曼滤波)` 对连续多帧的观测数据进行概率融合，消除无人机悬停高频抖动带来的定位噪声。
 
 ## 🏗️ 系统架构设计 (System Architecture)
-
-*(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
-
-- **Simulation**: Gazebo Harmonic
-- **Flight Controller**: PX4 Autopilot (SITL)
-- **High-Level Control**: ROS 2 Lyrical (BehaviorTree + Trajectory Planner)
-- **Perception**: TFLite C++ Inference Node + RGB-D Camera
-- **Localization**: TF2 + EKF Fusion Node
-
-## 🗺️ 开发路线图 (Roadmap)
-
-本项目采用敏捷开发模式，逐步实现以下里程碑：
-
-- [x] **Phase 0**: 项目立项，仓库构建与架构设计。
-- [x] **Phase 1**: 环境搭建 (Ubuntu 26.04, ROS 2 Lyrical) 与 PX4 SITL + Gazebo 物理仿真环境跑通。
-- [x] **Phase 2**: Micro XRCE-DDS 通信链路建立，获取高频里程计与传感器数据,并且编写 C++ Offboard 节点，破解飞控 GCS 断连保护，成功实现代码级解锁起飞。
-- [ ] **Phase 3**: 引入 BehaviorTree.CPP 构建状态机，实现基于 Minimum Snap 的 3D 轨迹自动生成与 Offboard 控制。
-- [ ] **Phase 4**: C++ 环境下 TensorFlow Lite 节点的集成，YOLO/SSD 模型 INT8 量化与实时 2D 缺陷检测。
-- [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
-- [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。
-
-## 🛠️ 依赖与安装 (Prerequisites & Installation)
-
-*(本项目仍在开发中，详细的 CMake 构建指南和 Dockerfile 将在后续版本提供)*
-
-当前开发环境标准：
-* OS: Ubuntu 24.04 LTS (Resolute)
-* ROS: ROS 2 Lyrical Luth
-* PX4: Main branch (SITL)
-* Build Tool: Colcon + CMake (C++ 17/20)
-
-## 👤 作者 (Author)
-**[huyongji / xinfangshi]**
-*   📫 邮箱: [1669147330@qq.com]
-*   💼 欢迎联系我交流技术或提供工作机会！
----
 ```mermaid
 graph TD
     classDef sim fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
@@ -98,4 +61,80 @@ graph TD
         Node1 -->|"提供相机实时空间位置"| Node3
     end
 ```
+```mermaid
+graph TD
+    classDef config fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
+    classDef exec fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef action fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
+    classDef hw fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px;
+
+    subgraph "📝 第一层：业务逻辑层 (改逻辑免编译)"
+        XML["📜 XML 剧本<br>(uav_inspection_tree.xml)"]:::config
+    end
+
+    subgraph "🧠 第二层：中枢调度层 (50Hz 引擎)"
+        Executor["🎬 执行器大管家<br>(tree_executor.cpp)"]:::exec
+    end
+
+    subgraph "🦾 第三层：动作实现层 (C++ Node API)"
+        Takeoff["✈️ 起飞节点<br>(takeoff_action.cpp)"]:::action
+        GoTo["🛸 闭环巡航节点<br>(goto_waypoint_action.cpp)"]:::action
+        Detect["👁️ AI 识别节点<br>(待开发...)"]:::action
+    end
+
+    subgraph "🚁 第四层：硬件抽象层 (ROS 2 / PX4)"
+        PX4["PX4 飞控 Offboard 模式"]:::hw
+    end
+
+    %% 核心交互流程连线
+    XML -.->|"1. 解析动作顺序"| Executor
+    
+    Executor ===>|"2. 依赖注入: 传递 ROS2 节点指针"| Takeoff
+    Executor ===>|"3. 高频控制流: 50Hz 持续 Tick"| Takeoff
+    Executor ===>|"Tick 自动流转"| GoTo
+    
+    Takeoff -.->|"4. 状态反馈: RUNNING 或 SUCCESS"| Executor
+    GoTo -.->|"4. 状态反馈: 计算 3D 距离"| Executor
+    
+    Takeoff ====>|"5. 高频数据流: 发布指令"| PX4
+    GoTo ====>|"5. 订阅里程计 / 发布航点"| PX4
+```
+*(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
+
+- **Simulation**: Gazebo Harmonic
+- **Flight Controller**: PX4 Autopilot (SITL)
+- **High-Level Control**: ROS 2 Lyrical (BehaviorTree + Trajectory Planner)
+- **Perception**: TFLite C++ Inference Node + RGB-D Camera
+- **Localization**: TF2 + EKF Fusion Node
+
+## 🗺️ 开发路线图 (Roadmap)
+
+本项目采用敏捷开发模式，逐步实现以下里程碑：
+
+- [x] **Phase 0**: 项目立项，仓库构建与架构设计。
+- [x] **Phase 1**: 环境搭建 (Ubuntu 24.04, ROS 2 Lyrical) 与 PX4 SITL + Gazebo 物理仿真环境跑通。
+- [x] **Phase 2**: Micro XRCE-DDS 通信链路建立，获取高频里程计与传感器数据,并且编写 C++ Offboard 节点，破解飞控 GCS 断连保护，成功实现代码级解锁起飞。
+- [ ] **Phase 3**: 复杂状态机与轨迹规划集成 (Agile Sprint)
+-       [x] **3.1**: 架构重构: 引入 BehaviorTree.CPP，实现 C++ .hpp/.cpp 分离与 ROS 2 节点依赖注入。
+-       [x] **3.2**: 闭环导航: 实现 Takeoff 与 GoToWaypoint 节点，完成 3D 空间欧式距离计算与连续航点巡航。
+-       [ ] **3.3**: 轨迹优化: 引入 Minimum Snap 凸优化算法，实现无人机 3D 样条平滑轨迹生成。
+- [ ] **Phase 4**: C++ 环境下 TensorFlow Lite 节点的集成，YOLO/SSD 模型 INT8 量化与实时 2D 缺陷检测。
+- [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
+- [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。
+
+## 🛠️ 依赖与安装 (Prerequisites & Installation)
+
+*(本项目仍在开发中，详细的 CMake 构建指南和 Dockerfile 将在后续版本提供)*
+
+当前开发环境标准：
+* OS: Ubuntu 24.04 LTS (Resolute)
+* ROS: ROS 2 Lyrical Luth
+* PX4: Main branch (SITL)
+* Build Tool: Colcon + CMake (C++ 17/20)
+
+## 👤 作者 (Author)
+**[huyongji / xinfangshi]**
+*   📫 邮箱: [1669147330@qq.com]
+*   💼 欢迎联系我交流技术或提供工作机会！
+---
 *If you like this project, please give it a ⭐!*

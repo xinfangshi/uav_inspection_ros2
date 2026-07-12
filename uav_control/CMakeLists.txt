@@ -14,6 +14,7 @@ find_package(ament_index_cpp REQUIRED)
 # 1. 编译行为树节点库
 add_library(bt_nodes SHARED
   src/takeoff_action.cpp
+  src/goto_waypoint_action.cpp
 )
 target_include_directories(bt_nodes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -1,10 +1,17 @@
 <root BTCPP_format="4">
     <BehaviorTree ID="MainTree">
-        <!-- 顺序节点 -->
+        <!-- 顺序节点：必须一步步执行 -->
         <Sequence name="UAV_Inspection_Mission">
             
-            <!-- 1. 起飞到 5米 (我们今天唯一写了 C++ 实现的节点) -->
+            <!-- 1. 起飞到 5米 -->
             <Takeoff target_altitude="5.0"/>
+            
+            <!-- 2. 飞向 3D 目标点 (注意：NED坐标系下，Z为负数代表在空中) -->
+            <!-- 这里让它向北(X)飞 10 米，向东(Y)飞 5 米，高度(Z)保持 5 米 -->
+            <GoToWaypoint x="10.0" y="5.0" z="-5.0" acceptable_radius="0.5"/>
+
+            <!-- 3. 悬停休息 3 秒 (BT自带的节点) -->
+            <Sleep msec="3000"/>
             
         </Sequence>
     </BehaviorTree>
