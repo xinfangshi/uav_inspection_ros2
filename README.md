@@ -114,10 +114,10 @@ graph TD
 - [x] **Phase 0**: 项目立项，仓库构建与架构设计。
 - [x] **Phase 1**: 环境搭建 (Ubuntu 24.04, ROS 2 Jazzy) 与 PX4 SITL + Gazebo 物理仿真环境跑通。
 - [x] **Phase 2**: Micro XRCE-DDS 通信链路建立，获取高频里程计与传感器数据，并且编写 C++ Offboard 节点，破解飞控 GCS 断连保护，成功实现代码级解锁起飞。
-- [ ] **Phase 3**: 复杂状态机与轨迹规划集成 (Agile Sprint)
+- [x] **Phase 3**: 复杂状态机与轨迹规划集成 (Agile Sprint)
   - [x] **3.1 架构重构**: 引入 BehaviorTree.CPP，实现 C++ `.hpp/.cpp` 与 ROS 2 节点依赖注入。
   - [x] **3.2 闭环导航**: 实现 `Takeoff` 与 `GoToWaypoint` 节点，完成 3D 空间欧式距离计算与连续航点巡航。
-  - [ ] **3.3 轨迹优化**: 引入 Minimum Snap 凸优化算法，实现无人机 3D 样条平滑轨迹生成。
+  - [x] **3.3 轨迹优化**: 引入 Minimum Snap 凸优化算法，实现无人机 3D 样条平滑轨迹生成。
 - [ ] **Phase 4**: C++ 环境下 TensorFlow Lite 节点的集成，YOLO/SSD 模型 INT8 量化与实时 2D 缺陷检测。
 - [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
 - [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。

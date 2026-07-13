@@ -7,6 +7,9 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <cmath>
 #include <atomic>
+#include <vector>
+// 引入轨迹规划器
+#include "uav_control/planners/trajectory_planner.hpp"
 
 namespace uav_control
 {
@@ -27,22 +30,22 @@ public:
 private:
     void publish_offboard_control_mode();
     void publish_trajectory_setpoint(float x, float y, float z);
-    
-    // 回调函数：接收无人机当前位置
     void odom_callback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg);
 
     rclcpp::Node::SharedPtr node_;
-    
     rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
     rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
-    
-    // 核心：新增订阅者，用来“看”自己的位置
     rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr odom_subscriber_;
     
-    // 使用原子操作保证多线程数据安全
     std::atomic<float> current_x_;
     std::atomic<float> current_y_;
     std::atomic<float> current_z_;
+    std::atomic<bool> odom_received_; 
+
+    // ========== 轨迹追踪变量 ==========
+    TrajectoryPlanner planner_;                  // 规划器实例
+    std::vector<Waypoint> current_trajectory_;   // 存放算出来的几百个密集坐标点
+    size_t trajectory_index_;                    // 当前飞到了第几个点
 };
 
 } // namespace behavior_trees

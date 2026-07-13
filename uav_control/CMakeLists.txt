@@ -10,17 +10,29 @@ find_package(rclcpp REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(behaviortree_cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(osqp REQUIRED)
+find_package(OsqpEigen REQUIRED)
 
-# 1. 编译行为树节点库
+# 1. 编译行为树节点库与算法库
 add_library(bt_nodes SHARED
-  src/takeoff_action.cpp
-  src/goto_waypoint_action.cpp
+  src/behavior_trees/takeoff_action.cpp
+  src/behavior_trees/goto_waypoint_action.cpp
+  src/planners/trajectory_planner.cpp
 )
 target_include_directories(bt_nodes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+# 这里只放 ROS 2 相关的包
 ament_target_dependencies(bt_nodes rclcpp px4_msgs behaviortree_cpp)
+
+# 这里链接非 ROS 2 的库
+target_link_libraries(bt_nodes
+  OsqpEigen::OsqpEigen
+  osqp::osqp
+  Eigen3::Eigen     # 通过链接 Eigen 目标，自动处理包含目录
+)
 
 # 2. 编译行为树执行器
 add_executable(tree_executor src/tree_executor.cpp)
