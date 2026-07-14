@@ -5,8 +5,7 @@
 #include <OsqpEigen/OsqpEigen.h>
 #include <vector>
 
-namespace uav_control
-{
+namespace uav_control {
 
 // 定义一个 3D 航点结构体
 struct Waypoint {
@@ -20,9 +19,8 @@ struct TrajectoryCoeffs {
     Eigen::VectorXd z_coeffs;
 };
 
-class TrajectoryPlanner
-{
-public:
+class TrajectoryPlanner {
+   public:
     TrajectoryPlanner();
 
     /**
@@ -35,9 +33,9 @@ public:
      */
     std::vector<Waypoint> generate_trajectory(const Waypoint& start, const Waypoint& end, double T, double dt = 0.02);
 
-private:
+   private:
     // 核心底层算法：基于 OSQP 求解单轴的 Minimum Snap 系数
     Eigen::VectorXd solve_minimum_snap_1D(double start_p, double end_p, double T);
 };
 
-} // namespace uav_control
+}  // namespace uav_control
