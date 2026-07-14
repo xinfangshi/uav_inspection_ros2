@@ -18,12 +18,13 @@ jobs:
       with:
         required-ros-distributions: jazzy
 
-    - name: 安装基础依赖 (Eigen & CMake)
+    - name: 安装系统级与 ROS 2 依赖包 (补全行为树库)
       run: |
         sudo apt-get update
-        sudo apt-get install -y libeigen3-dev cmake
+        #新增 ros-jazzy-behaviortree-cpp 
+        sudo apt-get install -y libeigen3-dev cmake ros-jazzy-behaviortree-cpp
         
-    - name: 编译安装 OSQP (二次规划求解器核心)
+    - name: 编译安装 OSQP (二次规划核心)
       run: |
         git clone --recursive https://github.com/osqp/osqp.git
         cd osqp && mkdir build && cd build
@@ -37,12 +38,15 @@ jobs:
         cmake .. && make && sudo make install
         sudo ldconfig
 
-    - name: 编译 ROS 2 项目
+    - name: 编译 ROS 2 项目 (包含外部消息包)
       run: |
         mkdir -p ros2_ws/src
-        # 将检出的代码软链接到工作空间
+        # 1. 把你的代码挂载进云端工作空间
         ln -s ${{ github.workspace }} ros2_ws/src/uav_inspection
+        # 2. 让云端也去拉取 PX4 的外部字典包！！
+        git clone https://github.com/PX4/px4_msgs.git ros2_ws/src/px4_msgs
+        
         cd ros2_ws
         source /opt/ros/jazzy/setup.bash
-        # 忽略 px4_msgs 的报错，因为 CI 环境下我们只检查算法与控制包
-        colcon build --packages-skip px4_msgs
+        # 3. 全量编译！
+        colcon build
