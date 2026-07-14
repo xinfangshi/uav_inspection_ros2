@@ -18,12 +18,19 @@ jobs:
       with:
         required-ros-distributions: jazzy
 
-    - name: 安装基础数学依赖 (Eigen & OSQP)
+    - name: 安装基础依赖 (Eigen & CMake)
       run: |
         sudo apt-get update
-        sudo apt-get install -y libeigen3-dev libosqp-dev cmake
+        sudo apt-get install -y libeigen3-dev cmake
         
-    - name: 编译安装 OsqpEigen
+    - name: 编译安装 OSQP (二次规划求解器核心)
+      run: |
+        git clone --recursive https://github.com/osqp/osqp.git
+        cd osqp && mkdir build && cd build
+        cmake .. && make && sudo make install
+        sudo ldconfig
+
+    - name: 编译安装 OsqpEigen (C++ 桥接库)
       run: |
         git clone https://github.com/robotology/osqp-eigen.git
         cd osqp-eigen && mkdir build && cd build
@@ -33,8 +40,9 @@ jobs:
     - name: 编译 ROS 2 项目
       run: |
         mkdir -p ros2_ws/src
+        # 将检出的代码软链接到工作空间
         ln -s ${{ github.workspace }} ros2_ws/src/uav_inspection
         cd ros2_ws
         source /opt/ros/jazzy/setup.bash
-        # 忽略 px4_msgs 的报错，因为 CI 环境下我们只检查 C++ 语法和数学库链接
+        # 忽略 px4_msgs 的报错，因为 CI 环境下我们只检查算法与控制包
         colcon build --packages-skip px4_msgs
