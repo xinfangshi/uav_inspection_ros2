@@ -21,6 +21,7 @@
 - **🎯 2D 到 3D 的概率融合定位**：维护高频 `World -> Drone -> Gimbal -> Camera` TF 树，通过 3D 射线投射 (Ray-Casting) 反解空间坐标，并引入 `EKF (扩展卡尔曼滤波)` 对连续多帧的观测数据进行概率融合，消除无人机悬停高频抖动带来的定位噪声。
 
 ## 🏗️ 系统架构设计 (System Architecture)
+- **1.系统整体架构图**
 ```mermaid
 graph TD
     classDef sim fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
@@ -61,43 +62,84 @@ graph TD
         Node1 -->|"提供相机实时空间位置"| Node3
     end
 ```
+- **2.核心控制与规划架构 (uav_control)**
 ```mermaid
 graph TD
     classDef config fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
     classDef exec fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
     classDef action fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
-    classDef hw fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px;
+    classDef math fill:#fce4ec,stroke:#9c27b0,stroke-width:2px;
+    classDef hw fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px;
 
-    subgraph "📝 第一层：业务逻辑层 (改逻辑免编译)"
-        XML["📜 XML 剧本<br>(uav_inspection_tree.xml)"]:::config
+    subgraph "📝 L1: 业务逻辑层 (XML)"
+        XML["📜 巡检任务剧本<br>(uav_inspection_tree.xml)"]:::config
     end
 
-    subgraph "🧠 第二层：中枢调度层 (50Hz 引擎)"
-        Executor["🎬 执行器大管家<br>(tree_executor.cpp)"]:::exec
+    subgraph "🧠 L2: 中枢调度层 (ROS 2 引擎)"
+        Executor["🎬 执行器大管家<br>(tree_executor.cpp)<br>以 50Hz 高频 Tick 树节点"]:::exec
     end
 
-    subgraph "🦾 第三层：动作实现层 (C++ Node API)"
+    subgraph "🦾 L3: 动作实现层 (C++ 节点池)"
         Takeoff["✈️ 起飞节点<br>(takeoff_action.cpp)"]:::action
         GoTo["🛸 闭环巡航节点<br>(goto_waypoint_action.cpp)"]:::action
-        Detect["👁️ AI 识别节点<br>(待开发...)"]:::action
     end
 
-    subgraph "🚁 第四层：硬件抽象层 (ROS 2 / PX4)"
+    subgraph "📐 L4: 核心算法层 (纯 C++ 数学库)"
+        Planner["📈 Minimum Snap 轨迹规划器<br>(OSQP 二次规划 + Eigen3)"]:::math
+    end
+
+    subgraph "🚁 L5: 硬件通信层"
         PX4["PX4 飞控 Offboard 模式"]:::hw
     end
 
-    %% 核心交互流程连线
-    XML -.->|"1. 解析动作顺序"| Executor
+    %% 连线
+    XML -.->|"1. 加载任务拓扑"| Executor
+    Executor ===>|"2. 依赖注入 (DI) 传递 ROS 2 指针"| Takeoff
+    Executor ===>|"3. 状态流转 (SUCCESS / RUNNING)"| GoTo
     
-    Executor ===>|"2. 依赖注入: 传递 ROS2 节点指针"| Takeoff
-    Executor ===>|"3. 高频控制流: 50Hz 持续 Tick"| Takeoff
-    Executor ===>|"Tick 自动流转"| GoTo
+    GoTo --->|"4. 传入起终点, 请求平滑轨迹"| Planner
+    Planner --->|"5. 返回多项式 3D 轨迹点"| GoTo
     
-    Takeoff -.->|"4. 状态反馈: RUNNING 或 SUCCESS"| Executor
-    GoTo -.->|"4. 状态反馈: 计算 3D 距离"| Executor
+    Takeoff ====>|"6. 发布解锁与位置指令"| PX4
+    GoTo ====>|"6. 订阅 Odom 闭环 / 发布高频航点"| PX4
+```
+- **3.视觉与边缘 AI 架构 (uav_vision)**
+```mermaid
+graph TD
+    classDef ros fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef interface fill:#fff3e0,stroke:#ff9800,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef algo fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
+    classDef sim fill:#f5f5f5,stroke:#9e9e9e,stroke-width:2px;
+
+    subgraph "🌐 数据源层"
+        GazeboCam["📷 Gazebo 深度相机<br>(IMX214 Sensor)"]:::sim
+        GZBridge["🌉 ros_gz_bridge<br>(图像高速转译)"]:::sim
+    end
+
+    subgraph "🔄 ROS 2 节点层"
+        CamNode["👁️ 视觉订阅主节点<br>(camera_subscriber.cpp)"]:::ros
+    end
+
+    subgraph "🔌 AI 接口抽象层"
+        IDetector["🔌 IDetector 纯虚基类<br>virtual cv::Rect detect()"]:::interface
+    end
+
+    subgraph "🧠 AI 算法实现层 (策略池)"
+        MockAI["🟩 MockDetector<br>(OpenCV 传统算子模拟)"]:::algo
+        TFLiteAI["🟧 TFLiteDetector<br>(TensorFlow Lite 部署 - 待开发)"]:::algo
+    end
+
+    %% 连线
+    GazeboCam -->|"原始图像流"| GZBridge
+    GZBridge -->|"/camera/image_raw"| CamNode
     
-    Takeoff ====>|"5. 高频数据流: 发布指令"| PX4
-    GoTo ====>|"5. 订阅里程计 / 发布航点"| PX4
+    CamNode ==>|"[1] 传入 cv::Mat 帧"| IDetector
+    IDetector -.->|"[2] 返回 2D Bounding Box"| CamNode
+    
+    MockAI -.->|"实现接口"| IDetector
+    TFLiteAI -.->|"实现接口"| IDetector
+    
+    CamNode -.->|"※ 依赖注入 (DI):<br>在 main 中可一键切换具体大脑"| MockAI
 ```
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
 
