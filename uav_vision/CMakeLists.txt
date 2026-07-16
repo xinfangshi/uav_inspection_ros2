@@ -12,10 +12,12 @@ find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 # ================= 编译核心视觉库 =================
 add_library(vision_core SHARED
   src/detectors/defect_detector.cpp         # <-- 算法核心
+  src/detectors/dnn_detector.cpp            # <-- AI视觉
   src/ros_nodes/camera_subscriber.cpp       # <-- ROS 包装
 )
 target_include_directories(vision_core PUBLIC
@@ -29,7 +31,7 @@ target_link_libraries(vision_core ${OpenCV_LIBS})
 # ================= 编译主执行器 =================
 add_executable(camera_node src/ros_nodes/vision_main.cpp)   
 target_link_libraries(camera_node vision_core)
-ament_target_dependencies(camera_node rclcpp)
+ament_target_dependencies(camera_node rclcpp ament_index_cpp)
 
 # ================= 编译独立 Demo =================
 add_executable(vision_demo src/demos/vision_demo.cpp)       
@@ -46,6 +48,10 @@ install(TARGETS camera_node vision_demo
 
 install(DIRECTORY include/
   DESTINATION include
+)
+
+install(DIRECTORY models
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
