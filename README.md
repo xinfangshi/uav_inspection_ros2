@@ -1,23 +1,24 @@
 # 🚁 Autonomous UAV Infrastructure Inspection & Defect 3D Localization System 
 **(基于边缘AI与ROS 2的无人机自主基建巡检与缺陷3D定位系统)**
 
-![ROS 2](https://img.shields.io/badge/ROS%202-Lyrical-34ce57?style=flat&logo=ros)
+![ROS 2](https://img.shields.io/badge/ROS%202-Jazzy-34ce57?style=flat&logo=ros)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420?style=flat&logo=ubuntu)
 ![PX4](https://img.shields.io/badge/PX4-Autopilot-0242a9?style=flat)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow%20Lite-C++-FF6F00?style=flat&logo=tensorflow)
+![Edge AI](https://img.shields.io/badge/OpenCV%20DNN-C++-5C3EE8?style=flat&logo=opencv)
 ![C++](https://img.shields.io/badge/C++-17%2F20-blue?style=flat&logo=c%2B%2B)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## 📖 项目背景 (Project Overview)
 在桥梁、高压电塔、风力发电机等高空危险基建的巡检中，传统方式高度依赖飞手遥控，且只能获取二维图像，难以对缺陷（如裂缝、生锈、破损）进行精确的 3D 空间定位。
-本项目旨在开发一套**全自主无人机巡检系统**，结合 **ROS 2 Lyrical** 与 **PX4** 飞控，在嵌入式机载平台上利用 **TensorFlow Lite (C++)** 进行实时边缘 AI 缺陷检测，并通过 **TF2 动态坐标变换**与**扩展卡尔曼滤波 (EKF)**，将 2D 像素映射并收敛为高精度的 3D 世界坐标，最终自动生成巡检报告。
+本项目旨在开发一套**全自主无人机巡检系统**，结合 **ROS 2 Jazzy** 与 **PX4** 飞控，在嵌入式机载平台上利用 **OpenCV DNN (C++)** 引擎进行实时边缘 AI 缺陷检测，并通过 **TF2 动态坐标变换**与**扩展卡尔曼滤波 (EKF)**，将 2D 像素映射并收敛为高精度的 3D 世界坐标，最终自动生成巡检报告。
 
 ## 🌟 核心技术亮点 (Technical Highlights)
 
 - **🕹️ 软硬解耦的 DDS 底层通信**：采用 `Micro XRCE-DDS` 桥接 PX4 与 ROS 2，实现高频姿态、里程计与 Offboard 控制指令的低延迟通信与时钟同步。
 - **🧠 现代机器人状态机架构**：摒弃面条式代码，引入工业界标准的 `BehaviorTree.CPP`（行为树）精细管理无人机状态（起飞、巡线、目标锁定、悬停、返航）。
 - **📈 凸优化轨迹规划 (Minimum Snap)**：不依赖简单的航点直飞，通过 `OSQP` 求解器生成符合无人机动力学约束（最小化加加速度）的平滑 3D 样条轨迹。
-- **⚡ 极限算力下的边缘 AI 推理**：针对嵌入式设备（如 Jetson/Raspberry Pi），使用 `TensorFlow Lite C++ API` 与 `XNNPACK` 代理进行 INT8 量化模型推理，结合 ROS 2 零拷贝机制，极大降低 CPU 占用与推理延迟。
+- **⚡ 极限算力下的边缘 AI 推理**：针对嵌入式设备（如 Jetson/Raspberry Pi），采用策略模式 (Strategy Pattern) 解耦视觉节点，并使用零第三方依赖的 `OpenCV DNN C++ API` 极速部署 MobileNet-SSD 模型，大幅降低 CPU 占用与推理延迟。
 - **🎯 2D 到 3D 的概率融合定位**：维护高频 `World -> Drone -> Gimbal -> Camera` TF 树，通过 3D 射线投射 (Ray-Casting) 反解空间坐标，并引入 `EKF (扩展卡尔曼滤波)` 对连续多帧的观测数据进行概率融合，消除无人机悬停高频抖动带来的定位噪声。
 
 ## 🏗️ 系统架构设计 (System Architecture)
@@ -53,7 +54,7 @@ graph TD
         DDS <-->|"解包转为 ROS Topic"| PX4_MSGS
         
         Node1("Offboard 控制与状态机节点<br>发送起飞、巡航轨迹"):::ros
-        Node2("TFLite 边缘视觉 AI 节点<br>识别裂缝/缺陷"):::ros
+        Node2("OpenCV DNN 边缘视觉 AI 节点<br>识别目标/缺陷"):::ros
         Node3("TF2 坐标转换与 3D 定位节点<br>将像素转为世界坐标"):::ros
         
         PX4_MSGS <-->|"听取位置 / 下发指令"| Node1
@@ -126,7 +127,7 @@ graph TD
 
     subgraph "🧠 AI 算法实现层 (策略池)"
         MockAI["🟩 MockDetector<br>(OpenCV 传统算子模拟)"]:::algo
-        TFLiteAI["🟧 TFLiteDetector<br>(TensorFlow Lite 部署 - 待开发)"]:::algo
+        DnnAI["🟧 DnnDetector<br>(OpenCV DNN 真模型部署)"]:::algo
     end
 
     %% 连线
@@ -137,7 +138,7 @@ graph TD
     IDetector -.->|"[2] 返回 2D Bounding Box"| CamNode
     
     MockAI -.->|"实现接口"| IDetector
-    TFLiteAI -.->|"实现接口"| IDetector
+    DnnAI -.->|"实现接口"| IDetector
     
     CamNode -.->|"※ 依赖注入 (DI):<br>在 main 中可一键切换具体大脑"| MockAI
 ```
@@ -160,7 +161,10 @@ graph TD
   - [x] **3.1 架构重构**: 引入 BehaviorTree.CPP，实现 C++ `.hpp/.cpp` 与 ROS 2 节点依赖注入。
   - [x] **3.2 闭环导航**: 实现 `Takeoff` 与 `GoToWaypoint` 节点，完成 3D 空间欧式距离计算与连续航点巡航。
   - [x] **3.3 轨迹优化**: 引入 Minimum Snap 凸优化算法，实现无人机 3D 样条平滑轨迹生成。
-- [ ] **Phase 4**: C++ 环境下 TensorFlow Lite 节点的集成，YOLO/SSD 模型 INT8 量化与实时 2D 缺陷检测。
+- [x] **Phase 4**: 边缘 AI 视觉大脑植入 (Agile Sprint)
+  - [x] **4.1 架构解耦**: 定义 IDetector 接口，实现策略模式 (Strategy Pattern)，彻底剥离 ROS 2 与底层 AI 算法。
+  - [x] **4.2 视频链路**: 配置 ros_gz_bridge，打通 Gazebo 深度相机到 ROS 2 的无延迟图像流。
+  - [ ] **4.1 模型部署**: 基于 OpenCV DNN C++ 引擎，零依赖部署 MobileNet-SSD 轻量级模型，实现实时 2D 目标追踪。
 - [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
 - [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。
 

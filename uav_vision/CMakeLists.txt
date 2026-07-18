@@ -16,8 +16,9 @@ find_package(ament_index_cpp REQUIRED)
 
 # ================= 编译核心视觉库 =================
 add_library(vision_core SHARED
-  src/detectors/defect_detector.cpp         # <-- 算法核心
-  src/detectors/dnn_detector.cpp            # <-- AI视觉
+  src/detectors/mock/defect_detector.cpp         # <-- 算法核心
+  src/detectors/dnn/dnn_detector.cpp            # <-- AI视觉
+  src/detectors/tflite/tflite_detector.cpp   # <--- 新增的 TFLite 实现
   src/ros_nodes/camera_subscriber.cpp       # <-- ROS 包装
 )
 target_include_directories(vision_core PUBLIC
@@ -26,7 +27,7 @@ target_include_directories(vision_core PUBLIC
   ${OpenCV_INCLUDE_DIRS}
 )
 ament_target_dependencies(vision_core rclcpp sensor_msgs cv_bridge image_transport std_msgs)
-target_link_libraries(vision_core ${OpenCV_LIBS})
+target_link_libraries(vision_core ${OpenCV_LIBS} tensorflow-lite)
 
 # ================= 编译主执行器 =================
 add_executable(camera_node src/ros_nodes/vision_main.cpp)   
