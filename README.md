@@ -126,8 +126,9 @@ graph TD
     end
 
     subgraph "🧠 AI 算法实现层 (策略池)"
-        MockAI["🟩 MockDetector<br>(OpenCV 传统算子模拟)"]:::algo
-        DnnAI["🟧 DnnDetector<br>(OpenCV DNN 真模型部署)"]:::algo
+        MockAI["🟩 MockDetector<br>(OpenCV 传统算子)"]:::algo
+        DnnAI["🟧 DnnDetector<br>(OpenCV DNN 模型部署)"]:::algo
+        TFLiteAI["🟥 TFLiteDetector<br>(TensorFlow Lite 原生部署)"]:::algo
     end
 
     %% 连线
@@ -139,6 +140,7 @@ graph TD
     
     MockAI -.->|"实现接口"| IDetector
     DnnAI -.->|"实现接口"| IDetector
+    TFLiteAI -.->|"实现接口"| IDetector
     
     CamNode -.->|"※ 依赖注入 (DI):<br>在 main 中可一键切换具体大脑"| MockAI
 ```
@@ -164,9 +166,42 @@ graph TD
 - [x] **Phase 4**: 边缘 AI 视觉大脑植入 (Agile Sprint)
   - [x] **4.1 架构解耦**: 定义 IDetector 接口，实现策略模式 (Strategy Pattern)，彻底剥离 ROS 2 与底层 AI 算法。
   - [x] **4.2 视频链路**: 配置 ros_gz_bridge，打通 Gazebo 深度相机到 ROS 2 的无延迟图像流。
-  - [ ] **4.1 模型部署**: 基于 OpenCV DNN C++ 引擎，零依赖部署 MobileNet-SSD 轻量级模型，实现实时 2D 目标追踪。
+  - [x] **4.3 模型部署**: 基于 OpenCV DNN C++ 引擎，零依赖部署 MobileNet-SSD 轻量级模型，实现实时 2D 目标追踪。
+  - [x] **4.4 具身闭环**:视觉节点跨域广播 AI 识别坐标，控制端利用 Blackboard 与 ReactiveFallback 机制，实现“发现目标->打断巡航->悬停”的自动追踪。
 - [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
 - [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。
+
+## 🚀 快速启动 (Quick Start / Running Steps)
+
+为了完整运行该具身智能大闭环系统，请开启 5 个独立的终端窗口并依次执行：
+
+**【终端 1：启动 3D 物理仿真】**
+```bash
+cd ~/ros2_ws/src/uav_inspection
+./start_simulation.sh
+```
+# ⚠️ 注意：等待 Gazebo 界面出现后，需点击左下角的【播放键 (Play)】让物理时间流动！
+**【终端 2：启动飞控 DDS 通信桥梁】**
+```bash
+MicroXRCEAgent udp4 -p 8888
+```
+**【终端 3：启动 Gazebo 视频专线转译】**
+```bash
+source /opt/ros/jazzy/setup.bash
+ros2 run ros_gz_bridge parameter_bridge /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image --ros-args -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw
+```
+**【终端 4：启动 AI 视觉大脑】**
+```bash
+source ~/ros2_ws/install/setup.bash
+# 可选参数：tflite (硬核模型), dnn (OpenCV模型), mock (传统算子)
+ros2 run uav_vision camera_node tflite
+```
+**【终端 5：启动行为树控制中枢】**
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch uav_control bringup.launch.py
+```
+# 操作提示：在无人机巡航过程中，向 Gazebo 视野内拖入一辆汽车或假人，即可触发视觉打断机制，无人机将紧急制动并悬停于目标上方。
 
 ## 🛠️ 依赖与安装 (Prerequisites & Installation)
 
