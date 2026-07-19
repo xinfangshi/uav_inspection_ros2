@@ -11,8 +11,10 @@ GoToWaypointAction::GoToWaypointAction(const std::string& name, const BT::NodeCo
     trajectory_setpoint_publisher_ =
         node_->create_publisher<px4_msgs::msg::TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
 
+// 注意：把 rclcpp::SensorDataQoS() 改成 rclcpp::QoS(10).best_effort()
     odom_subscriber_ = node_->create_subscription<px4_msgs::msg::VehicleOdometry>(
-        "/fmu/out/vehicle_odometry", rclcpp::SensorDataQoS(),
+        "/fmu/out/vehicle_odometry", 
+        rclcpp::QoS(10).best_effort(), 
         std::bind(&GoToWaypointAction::odom_callback, this, std::placeholders::_1));
 
     current_x_ = 0.0;

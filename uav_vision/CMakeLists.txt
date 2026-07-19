@@ -13,6 +13,7 @@ find_package(image_transport REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 # ================= 编译核心视觉库 =================
 add_library(vision_core SHARED
@@ -26,7 +27,7 @@ target_include_directories(vision_core PUBLIC
   $<INSTALL_INTERFACE:include>
   ${OpenCV_INCLUDE_DIRS}
 )
-ament_target_dependencies(vision_core rclcpp sensor_msgs cv_bridge image_transport std_msgs)
+ament_target_dependencies(vision_core rclcpp sensor_msgs cv_bridge image_transport std_msgs geometry_msgs)
 target_link_libraries(vision_core ${OpenCV_LIBS} tensorflow-lite)
 
 # ================= 编译主执行器 =================

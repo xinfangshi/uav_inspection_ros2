@@ -5,6 +5,7 @@
 #include <cv_bridge/cv_bridge.hpp>
 #include <opencv2/opencv.hpp>
 #include <memory>
+#include <geometry_msgs/msg/point.hpp>
 
 // 只引入接口类，不引入具体的实现类
 #include "uav_vision/detectors/i_detector.hpp" 
@@ -25,6 +26,8 @@ private:
     
     // 存放各种 AI 算法的通用接口指针
     std::shared_ptr<IDetector> detector_;
+    // 专门用于广播 AI 识别结果的喇叭
+    rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr target_pub_;
 };
 
 } // namespace uav_vision

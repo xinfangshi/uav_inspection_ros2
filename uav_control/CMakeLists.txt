@@ -17,6 +17,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 # 第三方依赖: 行为树与数学算法库
 find_package(behaviortree_cpp REQUIRED)
@@ -30,6 +31,8 @@ find_package(OsqpEigen REQUIRED)
 add_library(bt_nodes SHARED
   src/behavior_trees/takeoff_action.cpp
   src/behavior_trees/goto_waypoint_action.cpp
+  src/behavior_trees/check_defect_condition.cpp   # <- 新增
+  src/behavior_trees/hover_inspect_action.cpp     # <- 新增
   src/planners/trajectory_planner.cpp
 )
 
@@ -43,6 +46,7 @@ ament_target_dependencies(bt_nodes
   rclcpp 
   px4_msgs 
   behaviortree_cpp
+  geometry_msgs
 )
 
 # 链接纯 C++ 第三方库 (现代CMake写法：直接链接目标，自动处理头文件路径)
@@ -60,7 +64,7 @@ target_link_libraries(bt_nodes
 add_executable(tree_executor src/tree_executor.cpp)
 target_include_directories(tree_executor PUBLIC include)
 target_link_libraries(tree_executor bt_nodes) 
-ament_target_dependencies(tree_executor rclcpp px4_msgs behaviortree_cpp ament_index_cpp)
+ament_target_dependencies(tree_executor rclcpp px4_msgs behaviortree_cpp ament_index_cpp geometry_msgs)
 
 # (B) 纯数学算法独立 Demo
 add_executable(planner_demo src/planners/planner_demo.cpp src/planners/trajectory_planner.cpp)

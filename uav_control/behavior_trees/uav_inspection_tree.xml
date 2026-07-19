@@ -1,17 +1,26 @@
 <root BTCPP_format="4">
     <BehaviorTree ID="MainTree">
-        <!-- 顺序节点：必须一步步执行 -->
         <Sequence name="UAV_Inspection_Mission">
             
-            <!-- 1. 起飞到 5米 -->
+            <!-- 1. 起飞 -->
             <Takeoff target_altitude="5.0"/>
             
-            <!-- 2. 飞向 3D 目标点 (注意：NED坐标系下，Z为负数代表在空中) -->
-            <!-- 这里让它向北(X)飞 10 米，向东(Y)飞 5 米，高度(Z)保持 5 米 -->
-            <GoToWaypoint x="10.0" y="5.0" z="-5.0" acceptable_radius="0.5"/>
-
-            <!-- 3. 悬停休息 3 秒 (BT自带的节点) -->
-            <Sleep msec="3000"/>
+            <!-- 2. 智能巡逻与反应机制 -->
+            <!-- ReactiveFallback：只要上面(优先级高)成功，就打断下面(优先级低)！ -->
+            <ReactiveFallback name="Search_And_Inspect">
+                
+                <!-- 优先级 1：如果发现目标，就执行悬停巡检 -->
+                <Sequence name="Inspect_Logic">
+                    <!-- 条件节点：看黑板，发现目标没？(通过 {is_detected} 读取黑板变量) -->
+                    <CheckDefect is_detected="{defect_detected}" target_x="{defect_u}" target_y="{defect_v}"/>
+                    <!-- 如果发现了，瞬间进入这个动作！ -->
+                    <HoverAndInspect/>
+                </Sequence>
+                
+                <!-- 优先级 2：如果没发现目标，就继续默默巡线飞向远方 -->
+                <GoToWaypoint x="15.0" y="0.0" z="-5.0" acceptable_radius="0.5"/>
+                
+            </ReactiveFallback>
             
         </Sequence>
     </BehaviorTree>
