@@ -14,7 +14,7 @@ cv::Rect MockDetector::detect(const cv::Mat& input_image)
     // 1. 转为灰度图
     cv::cvtColor(input_image, gray, cv::COLOR_BGR2GRAY);
     // 2. 寻找极暗的区域（模拟黑色的裂缝），阈值设为 50
-    cv::threshold(gray, thresh, 50, 255, cv::THRESH_BINARY_INV);
+    cv::threshold(gray, thresh, 120, 255, cv::THRESH_BINARY_INV);
     
     std::vector<std::vector<cv::Point>> contours;
     // 3. 提取轮廓

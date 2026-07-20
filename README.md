@@ -180,7 +180,6 @@ graph TD
 cd ~/ros2_ws/src/uav_inspection
 ./start_simulation.sh
 ```
-# ⚠️ 注意：等待 Gazebo 界面出现后，需点击左下角的【播放键 (Play)】让物理时间流动！
 **【终端 2：启动飞控 DDS 通信桥梁】**
 ```bash
 MicroXRCEAgent udp4 -p 8888
@@ -201,7 +200,7 @@ ros2 run uav_vision camera_node tflite
 source ~/ros2_ws/install/setup.bash
 ros2 launch uav_control bringup.launch.py
 ```
-# 操作提示：在无人机巡航过程中，向 Gazebo 视野内拖入一辆汽车或假人，即可触发视觉打断机制，无人机将紧急制动并悬停于目标上方。
+操作提示：在无人机巡航过程中，向 Gazebo 视野内拖入一辆汽车或假人，即可触发视觉打断机制，无人机将紧急制动并悬停于目标上方。
 
 ## 🛠️ 依赖与安装 (Prerequisites & Installation)
 
