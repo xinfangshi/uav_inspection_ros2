@@ -8,6 +8,10 @@
 #include <memory>
 #include <mutex>
 
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include "uav_vision/detectors/i_detector.hpp"
 
 namespace uav_vision
@@ -34,6 +38,10 @@ private:
     // 线程安全存取最新的深度图
     cv::Mat latest_depth_frame_;
     std::mutex depth_mutex_;
+
+    // 专门用于倾听系统 TF 树的空间雷达！
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };
 
 } // namespace uav_vision

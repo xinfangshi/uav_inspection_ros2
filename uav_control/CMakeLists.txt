@@ -18,6 +18,8 @@ find_package(rclcpp REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+
 
 # 第三方依赖: 行为树与数学算法库
 find_package(behaviortree_cpp REQUIRED)
@@ -33,6 +35,7 @@ add_library(bt_nodes SHARED
   src/behavior_trees/goto_waypoint_action.cpp
   src/behavior_trees/check_defect_condition.cpp   # <- 新增
   src/behavior_trees/hover_inspect_action.cpp     # <- 新增
+  src/behavior_trees/land_action.cpp
   src/planners/trajectory_planner.cpp
 )
 
@@ -75,6 +78,14 @@ target_link_libraries(planner_demo
   osqp::osqp
 )
 
+# (C) TF 空间坐标树广播中心
+add_executable(uav_tf_broadcaster 
+  src/localization/tf_main.cpp 
+  src/localization/tf_broadcaster.cpp
+)
+target_include_directories(uav_tf_broadcaster PUBLIC include)
+ament_target_dependencies(uav_tf_broadcaster rclcpp px4_msgs tf2_ros geometry_msgs)
+
 # ==============================================================================
 # 5. 测试模块 (Testing)
 # ==============================================================================
@@ -104,7 +115,7 @@ install(TARGETS bt_nodes
 )
 
 # 统一安装所有可执行文件 (放到包的专属目录，ros2 run 才能找到)
-install(TARGETS tree_executor planner_demo
+install(TARGETS tree_executor planner_demo uav_tf_broadcaster
   DESTINATION lib/${PROJECT_NAME}
 )
 

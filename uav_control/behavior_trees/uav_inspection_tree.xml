@@ -21,6 +21,7 @@
                 <GoToWaypoint x="15.0" y="0.0" z="-5.0" acceptable_radius="0.5"/>
                 
             </ReactiveFallback>
+            <Land/>
             
         </Sequence>
     </BehaviorTree>

@@ -17,6 +17,10 @@ CameraSubscriber::CameraSubscriber(std::shared_ptr<IDetector> detector)
 
     target_pub_ = this->create_publisher<geometry_msgs::msg::Point>("/vision/target_3d_position", 10);
 
+    // 实例化 TF 空间雷达
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
     RCLCPP_INFO(this->get_logger(), "👁️ 视觉与深度 3D 空间解算节点已启动！");
 }
 
@@ -57,11 +61,29 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 if (!depth_frame.empty()) {
                     u = std::clamp(u, 0, depth_frame.cols - 1);
                     v = std::clamp(v, 0, depth_frame.rows - 1);
-                    // 🔑 核心 1：直接去深度图里查出物理距离 Z (单位：米)
-                    float Z = depth_frame.at<float>(v, u);
-                    // 打印出底层读到的真实深度值，看看 Gazebo 到底传了什么过来！
+                    // 🛡️ 工业级抗噪测距：取中心 5x5 区域的有效深度平均值！
+                    // =========================================================
+                    int radius = 2; // 5x5 的邻域
+                    float sum_Z = 0.0f;
+                    int valid_count = 0;
+
+                    for (int dy = -radius; dy <= radius; ++dy) {
+                        for (int dx = -radius; dx <= radius; ++dx) {
+                            int nu = std::clamp(u + dx, 0, depth_frame.cols - 1);
+                            int nv = std::clamp(v + dy, 0, depth_frame.rows - 1);
+                            float val = depth_frame.at<float>(nv, nu);
+                        
+                            // 只统计有效的物理距离
+                            if (std::isfinite(val) && val > 0.1f && val < 50.0f) {
+                                sum_Z += val;
+                                valid_count++;
+                        }
+                    }
+                }
+                    // 计算有效平均值，如果全无效则给个 inf
+                    float Z = (valid_count > 0) ? (sum_Z / valid_count) : std::numeric_limits<float>::infinity();
                     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                    "🔍 [Debug] 当前中心点深度原始值 Z = %f", Z);
+                    "🔍 [Debug] 中心 5x5 区域获取有效深度点 %d 个，均值 Z = %f", valid_count, Z);
                     // 🔥 修复 Bug：去掉了愚蠢的 size_t 转换，放宽到 0.1 米以上即可！
                     if (std::isfinite(Z) && Z > 0.1f && Z < 50.0f) {
                         float fx = 200.0f, fy = 200.0f;
@@ -74,8 +96,43 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                         // 绿字标注 3D 测距成功！
                         cv::putText(rgb_frame, "3D Target: " + cv::format("%.2fm", Z), 
                                     cv::Point(bbox.x, bbox.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 2);
-                        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                            "🎯 测算 3D 坐标: X=%.2fm, Y=%.2fm, Z(距离)=%.2fm", target_3d_msg.x, target_3d_msg.y, target_3d_msg.z);
+
+                        // === 空间代数 ===
+                        // A. 构造一个在【相机坐标系 (camera_link)】下的 3D 点
+                        geometry_msgs::msg::PointStamped pt_cam;
+                        pt_cam.header.frame_id = "camera_link";
+                        // 🔥 修复 TF 时空穿梭 Bug：将时间戳设为 0，强制获取最新可用的坐标变换！
+                        pt_cam.header.stamp.sec = 0;
+                        pt_cam.header.stamp.nanosec = 0;
+                        
+                        // ROS 2 标准相机坐标系：X朝前，Y朝左，Z朝上
+                        // 计算机视觉算出的：X朝右，Y朝下，Z朝前
+                        pt_cam.point.x = Z;                                // 深度距离就是正前方(X)
+                        pt_cam.point.y = -((u - cx) * Z / fx);             // CV的右(X) 是 ROS的左(-Y)
+                        pt_cam.point.z = -((v - cy) * Z / fy);             // CV的下(Y) 是 ROS的下(-Z)
+
+                        geometry_msgs::msg::PointStamped pt_map;
+                        try {
+                            // B. 去 TF 树里查一下此刻无人机的真实姿态，把相机坐标秒变地球绝对坐标！
+                            pt_map = tf_buffer_->transform(pt_cam, "map", tf2::durationFromSec(0.1));
+
+                            // 覆盖原来要发出去的消息，现在发的是真实的地球坐标！
+                            target_3d_msg.x = pt_map.point.x;
+                            target_3d_msg.y = pt_map.point.y;
+                            target_3d_msg.z = pt_map.point.z; // 注意，这里我们把 z 放真实的物理高度。不再作标志位了！
+
+                            cv::putText(rgb_frame, "Map X:" + cv::format("%.1f", pt_map.point.x) + " Y:" + cv::format("%.1f", pt_map.point.y), 
+                                        cv::Point(bbox.x, bbox.y - 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0), 2);
+                            
+                            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
+                                "🌍 [绝对定位] 目标处于地球坐标: X=%.2f 米, Y=%.2f 米, 绝对高度 Z=%.2f 米", 
+                                pt_map.point.x, pt_map.point.y, pt_map.point.z);
+                                
+                        } catch (const tf2::TransformException & ex) {
+                            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                                "⚠️ 空间坐标树未就绪: %s", ex.what());
+                        }
+
                     } else {
                         target_3d_msg.z = -1.0;
                     }

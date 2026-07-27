@@ -38,6 +38,8 @@ class GoToWaypointAction : public BT::StatefulActionNode {
     std::atomic<float> current_y_;
     std::atomic<float> current_z_;
     std::atomic<bool> odom_received_;
+    // 新增：判断轨迹是否已经生成的标志位
+    bool trajectory_generated_;
 
     // ========== 轨迹追踪变量 ==========
     TrajectoryPlanner planner_;                 // 规划器实例

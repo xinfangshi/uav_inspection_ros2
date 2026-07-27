@@ -8,6 +8,7 @@
 #include "uav_control/behavior_trees/goto_waypoint_action.hpp"
 #include "uav_control/behavior_trees/check_defect_condition.hpp"
 #include "uav_control/behavior_trees/hover_inspect_action.hpp"
+#include "uav_control/behavior_trees/land_action.hpp"
 
 int main(int argc, char **argv)
 {
@@ -44,6 +45,7 @@ int main(int argc, char **argv)
     factory.registerNodeType<uav_control::behavior_trees::GoToWaypointAction>("GoToWaypoint", node);
     factory.registerNodeType<uav_control::behavior_trees::HoverInspectAction>("HoverAndInspect", node);
     factory.registerNodeType<uav_control::behavior_trees::CheckDefectCondition>("CheckDefect");
+    factory.registerNodeType<uav_control::behavior_trees::LandAction>("Land", node);
 
     std::string package_path = ament_index_cpp::get_package_share_directory("uav_control");
     std::string xml_file = package_path + "/behavior_trees/" + xml_filename;
