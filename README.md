@@ -187,13 +187,18 @@ MicroXRCEAgent udp4 -p 8888
 **【终端 3：启动 Gazebo 视频专线转译】**
 ```bash
 source /opt/ros/jazzy/setup.bash
-ros2 run ros_gz_bridge parameter_bridge /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image --ros-args -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw
+ros2 run ros_gz_bridge parameter_bridge \
+  /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image \
+  /depth_camera@sensor_msgs/msg/Image[gz.msgs.Image \
+  --ros-args \
+  -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw \
+  -r /depth_camera:=/camera/depth_image
 ```
 **【终端 4：启动 AI 视觉大脑】**
 ```bash
 source ~/ros2_ws/install/setup.bash
-# 可选参数：tflite (硬核模型), dnn (OpenCV模型), mock (传统算子)
 ros2 run uav_vision camera_node tflite
+# 可选参数：tflite (硬核模型), dnn (OpenCV模型), mock (传统算子)
 ```
 **【终端 5：启动行为树控制中枢】**
 ```bash

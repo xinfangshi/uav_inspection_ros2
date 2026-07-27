@@ -54,7 +54,7 @@ BT::NodeStatus LandAction::onRunning() {
         }
         
         // 再等 1 秒钟，确保飞控执行了锁定指令，然后才安全退出程序！
-        if (grounded_counter_ > 150) {
+        if (grounded_counter_ > 300) {
             RCLCPP_INFO(node_->get_logger(), "[Land] ✅ 降落与锁定彻底完毕，巡检任务圆满闭环！");
             return BT::NodeStatus::SUCCESS;
         }
