@@ -26,12 +26,14 @@ int main(int argc, char **argv)
 
     // 建立顺风耳：偷听视觉大脑的广播，听到了就立刻写在黑板上！
     auto vision_sub = node->create_subscription<geometry_msgs::msg::Point>(
-        "/vision/target_position", 10,
+        "/vision/target_3d_position", 10,
         [&blackboard](const geometry_msgs::msg::Point::SharedPtr msg) {
-            if (msg->z > 0.5) { // z=1.0 表示发现目标
+            // 🔥 修复：依靠 z (高度或标志位) 来判定！如果 z != -1.0，说明 3D 解算成功！
+            if (msg->z != -1.0) { 
                 blackboard->set<bool>("defect_detected", true);
-                blackboard->set<double>("defect_u", msg->x);
-                blackboard->set<double>("defect_v", msg->y);
+                blackboard->set<double>("defect_x", msg->x);
+                blackboard->set<double>("defect_y", msg->y);
+                blackboard->set<double>("defect_z", msg->z); // 真实的物理 Z
             } else {
                 blackboard->set<bool>("defect_detected", false);
             }

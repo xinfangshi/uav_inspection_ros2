@@ -12,7 +12,7 @@
                 <!-- 优先级 1：如果发现目标，就执行悬停巡检 -->
                 <Sequence name="Inspect_Logic">
                     <!-- 条件节点：看黑板，发现目标没？(通过 {is_detected} 读取黑板变量) -->
-                    <CheckDefect is_detected="{defect_detected}" target_x="{defect_u}" target_y="{defect_v}"/>
+                    <CheckDefect is_detected="{defect_detected}" target_x="{defect_x}" target_y="{defect_y}" target_z="{defect_z}"/>
                     <!-- 如果发现了，瞬间进入这个动作！ -->
                     <HoverAndInspect/>
                 </Sequence>
@@ -21,6 +21,10 @@
                 <GoToWaypoint x="15.0" y="0.0" z="-5.0" acceptable_radius="0.5"/>
                 
             </ReactiveFallback>
+
+            <!-- 🔥 修复 Bug 2：任务结束后，悬停 3 秒释放物理惯性，防止直接降落翻车！ -->
+            <Sleep msec="3000"/>
+
             <Land/>
             
         </Sequence>

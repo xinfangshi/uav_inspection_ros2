@@ -29,38 +29,36 @@ BT::NodeStatus LandAction::onStart() {
         RCLCPP_WARN(node_->get_logger(), "[Land] ⏳ 等待里程计...");
         return BT::NodeStatus::RUNNING;
     }
-    land_x_ = current_x_;
-    land_y_ = current_y_;
-    grounded_counter_ = 0; // 初始化接地计时器
-    RCLCPP_INFO(node_->get_logger(), "[Land] 🛬 开始垂直降落...");
+    
+    // 🔥 修复 Bug 3：不再发送 Offboard 位置，而是下发 PX4 原生自动降落指令 (Command ID: 21)
+    publish_vehicle_command(px4_msgs::msg::VehicleCommand::VEHICLE_CMD_NAV_LAND);
+    RCLCPP_INFO(node_->get_logger(), "[Land] 🛬 切换至 PX4 原生自动降落模式 (AUTO.LAND)...");
+    
+    // 初始化防抖计时器
+    land_x_ = current_z_; // 借用这个变量存上一次的高度
+    grounded_counter_ = 0; 
+    
     return BT::NodeStatus::RUNNING;
 }
 
 BT::NodeStatus LandAction::onRunning() {
-    // 必须持续发送心跳，否则飞控会立刻失控！
-    publish_offboard_control_mode();
-    publish_trajectory_setpoint(land_x_, land_y_, 1.0);
-
-    float current_alt = -current_z_; 
+    // PX4 正在自动降落，我们只需要在旁边监控高度变化即可！
     
-    // 闭环判断：如果高度小于 0.25 米，开始计时！
-    if (current_alt < 0.25) {
+    // 计算当前高度和上一帧高度的差值
+    float delta_z = std::abs(current_z_ - land_x_);
+    land_x_ = current_z_;
+
+    // 如果高度几乎不怎么变化了 (垂直速度接近 0)
+    if (delta_z < 0.005) {
         grounded_counter_++;
-        
-        // 50Hz * 100 = 2秒。把飞机死死按在地上 3 秒钟，让飞控着陆检测器彻底确认！
-        if (grounded_counter_ == 250) {
-            RCLCPP_INFO(node_->get_logger(), "[Land] 🌍 接触地面并保持稳定！发送锁定电机 (Disarm) 指令...");
-            disarm(); 
-        }
-        
-        // 再等 1 秒钟，确保飞控执行了锁定指令，然后才安全退出程序！
-        if (grounded_counter_ > 300) {
-            RCLCPP_INFO(node_->get_logger(), "[Land] ✅ 降落与锁定彻底完毕，巡检任务圆满闭环！");
-            return BT::NodeStatus::SUCCESS;
-        }
     } else {
-        // 如果中间被风吹起来了，计时器清零，重新算！
-        grounded_counter_ = 0;
+        grounded_counter_ = 0; // 如果还在下降，计时器清零
+    }
+
+    // 监控 3 秒钟 (50Hz * 3s = 150)
+    if (grounded_counter_ > 150) {
+        RCLCPP_INFO(node_->get_logger(), "[Land] ✅ 降落彻底完毕！PX4 将自动执行锁定电机。任务圆满闭环！");
+        return BT::NodeStatus::SUCCESS;
     }
     
     return BT::NodeStatus::RUNNING;
