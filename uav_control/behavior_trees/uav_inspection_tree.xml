@@ -15,6 +15,8 @@
                     <CheckDefect is_detected="{defect_detected}" target_x="{defect_x}" target_y="{defect_y}" target_z="{defect_z}"/>
                     <!-- 如果发现了，瞬间进入这个动作！ -->
                     <HoverAndInspect/>
+                     <!-- 拍照完成后强制报错，逼迫行为树回退到下方的巡航任务！ -->
+                    <AlwaysFailure/>
                 </Sequence>
                 
                 <!-- 优先级 2：如果没发现目标，就继续默默巡线飞向远方 -->
