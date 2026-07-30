@@ -11,15 +11,14 @@
 
 ## 📖 项目背景 (Project Overview)
 在桥梁、高压电塔、风力发电机等高空危险基建的巡检中，传统方式高度依赖飞手遥控，且只能获取二维图像，难以对缺陷（如裂缝、生锈、破损）进行精确的 3D 空间定位。
-本项目旨在开发一套**全自主无人机巡检系统**，结合 **ROS 2 Jazzy** 与 **PX4** 飞控，在嵌入式机载平台上利用 **OpenCV DNN (C++)** 引擎进行实时边缘 AI 缺陷检测，并通过 **TF2 动态坐标变换**与**扩展卡尔曼滤波 (EKF)**，将 2D 像素映射并收敛为高精度的 3D 世界坐标，最终自动生成巡检报告。
+本项目旨在开发一套**全自主无人机巡检系统**，结合 **ROS 2 Jazzy** 与 **PX4** 飞控，在嵌入式机载平台上利用 **OpenCV DNN / TensorFlow Lite (C++)** 引擎进行实时边缘 AI 缺陷检测，并通过 **TF2 动态坐标变换**与**扩展卡尔曼滤波 (EKF)**，将 2D 像素映射并收敛为高精度的 3D 世界坐标，最终自动生成巡检报告。
 
 ## 🌟 核心技术亮点 (Technical Highlights)
-
-- **🕹️ 软硬解耦的 DDS 底层通信**：采用 `Micro XRCE-DDS` 桥接 PX4 与 ROS 2，实现高频姿态、里程计与 Offboard 控制指令的低延迟通信与时钟同步。
-- **🧠 现代机器人状态机架构**：摒弃面条式代码，引入工业界标准的 `BehaviorTree.CPP`（行为树）精细管理无人机状态（起飞、巡线、目标锁定、悬停、返航）。
-- **📈 凸优化轨迹规划 (Minimum Snap)**：不依赖简单的航点直飞，通过 `OSQP` 求解器生成符合无人机动力学约束（最小化加加速度）的平滑 3D 样条轨迹。
-- **⚡ 极限算力下的边缘 AI 推理**：针对嵌入式设备（如 Jetson/Raspberry Pi），采用策略模式 (Strategy Pattern) 解耦视觉节点，并使用零第三方依赖的 `OpenCV DNN C++ API` 极速部署 MobileNet-SSD 模型，大幅降低 CPU 占用与推理延迟。
-- **🎯 2D 到 3D 的概率融合定位**：维护高频 `World -> Drone -> Gimbal -> Camera` TF 树，通过 3D 射线投射 (Ray-Casting) 反解空间坐标，并引入 `EKF (扩展卡尔曼滤波)` 对连续多帧的观测数据进行概率融合，消除无人机悬停高频抖动带来的定位噪声。
+- **🕹️ 软硬解耦的 DDS 底层通信**：采用 `Micro XRCE-DDS` 桥接 PX4 与 ROS 2，实现高频姿态、里程计与 Offboard 控制指令的低延迟通信与时钟同步，并优化系统内核突破实时调度权限。
+- **🧠 现代机器人状态机架构**：摒弃面条式代码，引入工业界标准的 `BehaviorTree.CPP`（行为树）精细管理无人机状态（起飞、巡线、目标锁定、悬停、原生自动降落）。
+- **📈 安全运动规划 (Safe Motion Planning)**：基于 `OSQP` 求解器生成 Minimum Snap 平滑 3D 样条轨迹，结合高度电子围栏与防震荡机制，彻底告别过冲与翻车。
+- **⚡ 极限算力下的边缘 AI 推理**：针对嵌入式设备（如 Jetson/Raspberry Pi），采用策略模式 (Strategy Pattern) 解耦视觉节点，支持一键热切换 `TensorFlow Lite` 与 `OpenCV DNN` 引擎。包含动态张量类型分配与空指针防御性编程。
+- **🎯 2D 到 3D 的空间绝对定位**：维护高频 `map -> base_link -> camera_link` TF 树，通过针孔相机模型反解 3D 射线，利用 TF2 矩阵相乘消除无人机姿态倾角误差，输出地球绝对坐标。
 
 ## 🏗️ 系统架构设计 (System Architecture)
 - **1.系统整体架构图**
@@ -168,7 +167,10 @@ graph TD
   - [x] **4.2 视频链路**: 配置 ros_gz_bridge，打通 Gazebo 深度相机到 ROS 2 的无延迟图像流。
   - [x] **4.3 模型部署**: 基于 OpenCV DNN C++ 引擎，零依赖部署 MobileNet-SSD 轻量级模型，实现实时 2D 目标追踪。
   - [x] **4.4 具身闭环**:视觉节点跨域广播 AI 识别坐标，控制端利用 Blackboard 与 ReactiveFallback 机制，实现“发现目标->打断巡航->悬停”的自动追踪。
-- [ ] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
+- [x] **Phase 5**: TF2 动态坐标树维护，射线投射与 EKF 卡尔曼滤波 3D 定位算法实现。
+  - [x] **5.1 空间坐标树 (TF Tree)**: 建立 tf_broadcaster 节点，动态发布 map -> base_link -> camera_link 拓扑关系。
+  - [x] **5.2 相机反投影**: 结合单通道 32FC1 深度图均值抗噪算法与针孔相机内参，将 2D 像素框反解为相机坐标系物理坐标。
+  - [x] **5.3 绝对坐标系映射**: 引入 TF2 监听器矩阵相乘，消除无人机机身姿态倾角误差，精准输出目标在地球绝对坐标系 (Map) 的位置。
 - [ ] **Phase 6**: 系统级性能 Profiling（延迟、CPU 占用、定位误差分析）与文档完善。
 
 ## 🚀 快速启动 (Quick Start / Running Steps)
@@ -212,10 +214,11 @@ ros2 launch uav_control bringup.launch.py
 *(本项目仍在开发中，详细的 CMake 构建指南和 Dockerfile 将在后续版本提供)*
 
 当前开发环境标准：
-* OS: Ubuntu 24.04 LTS (Resolute)
-* ROS: ROS 2 Lyrical Luth
-* PX4: Main branch (SITL)
+* OS: Ubuntu 24.04 LTS (Noble Numbat)
+* ROS: ROS 2 Jazzy Jalisco
+* Flight Controller: PX4 Autopilot (SITL v1.14+)
 * Build Tool: Colcon + CMake (C++ 17/20)
+* Math & AI: Eigen3, OSQP, TensorFlow Lite C++ API, OpenCV 4.x
 
 ## 👤 作者 (Author)
 **[huyongji / xinfangshi]**
