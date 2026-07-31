@@ -143,6 +143,46 @@ graph TD
     
     CamNode -.->|"※ 依赖注入 (DI):<br>在 main 中可一键切换具体大脑"| MockAI
 ```
+- **3.视觉与边缘 AI 架构 (uav_vision)**
+```mermaid
+graph TD
+    classDef data fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
+    classDef algo fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
+    classDef tf fill:#fce4ec,stroke:#9c27b0,stroke-width:2px;
+    classDef ros fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+
+    subgraph "👁️ L1: 感知输入层 (承接 AI 视觉)"
+        BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector 大脑"]:::data
+        DepthMap["🌌 实时深度图 (32FC1)<br>来自 ros_gz_bridge"]:::data
+    end
+
+    subgraph "🧠 L2: 空间反解与滤波层 (C++ 算法)"
+        MedianFilter["📏 区域中值滤波算法<br>(5x5 ROI 剔除 NaN/Inf 噪点)"]:::algo
+        Pinhole["📷 针孔相机反投影<br>(基于内参 fx, fy, cx, cy)"]:::algo
+        Kalman["🛡️ 目标卡尔曼滤波器<br>(Linear KF 过滤悬停高频震荡)"]:::algo
+    end
+
+    subgraph "🌐 L3: 绝对坐标映射层 (ROS 2 TF)"
+        TFTree["🌳 动态坐标树 (TF2 Buffer)<br>map -> base_link -> camera_link"]:::tf
+        Transform["🔄 矩阵相乘变换<br>(消除机身 Pitch/Roll 倾角误差)"]:::tf
+    end
+
+    subgraph "📡 L4: 具身智能输出层"
+        Pub["📢 广播 3D 绝对坐标<br>(/vision/target_3d_position)"]:::ros
+    end
+
+    %% 核心数据流连线 (使用安全语法)
+    BBox ==>|"[1] 提供中心像素坐标"| MedianFilter
+    DepthMap ==>|"[1] 提供物理测距数据"| MedianFilter
+    
+    MedianFilter -.->|"[2] 提取真实距离 Z"| Pinhole
+    Pinhole -.->|"[3] 输出相机坐标系 (Xc, Yc, Zc)"| Kalman
+    Kalman -.->|"[4] 输出平滑后的相机 3D 坐标"| Transform
+    
+    TFTree ==>|"[5] 提供无人机实时位姿矩阵"| Transform
+    Transform ==>|"[6] 解算出地球绝对坐标 (Xw, Yw, Zw)"| Pub
+```
+
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
 
 - **Simulation**: Gazebo Harmonic
@@ -192,9 +232,11 @@ source /opt/ros/jazzy/setup.bash
 ros2 run ros_gz_bridge parameter_bridge \
   /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image \
   /depth_camera@sensor_msgs/msg/Image[gz.msgs.Image \
+  /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
   --ros-args \
   -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw \
-  -r /depth_camera:=/camera/depth_image
+  -r /depth_camera:=/camera/depth_image \
+  -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info:=/camera/camera_info
 ```
 **【终端 4：启动 AI 视觉大脑】**
 ```bash

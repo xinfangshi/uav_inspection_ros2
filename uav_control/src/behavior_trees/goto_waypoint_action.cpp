@@ -82,14 +82,14 @@ BT::NodeStatus GoToWaypointAction::onRunning()
 
         double distance = std::sqrt(std::pow(end_pt.x - start_pt.x, 2) + std::pow(end_pt.y - start_pt.y, 2) + std::pow(end_pt.z - start_pt.z, 2));
         
+     // =========================================================================
+        // 🛡️ 安全防线 3：动态动力学限速 (Dynamic Kinematic Constraints) 升级版！
         // =========================================================================
-        // 🛡️ 安全防线 3：动态动力学限速 (Dynamic Kinematic Constraints)
-        // 之前的速度(2.0m/s)太快导致翻车。现在降速到保守的 1.0m/s，并强制给予至少 3 秒的加减速缓冲时间！
-        // 这将极大降低 Snap 曲线两端的陡峭程度，让无人机起步和刹车如同豪车般平顺。
-        // =========================================================================
-        double T = std::max(3.0, distance / 1.0); 
+        // 降低期望平均速度至 0.8m/s，并强制基础缓冲时间提高到 4.0秒！
+        // 在 Minimum Snap 中，时间 T 越长，多项式生成的加速度峰值就会呈几何级数下降！
+        double T = std::max(4.0, distance / 0.8); 
 
-        RCLCPP_INFO(node_->get_logger(), "🛡️ [安全规划] 开始生成平滑轨迹! 距离: %.2fm, 强制放缓耗时: %.1fs", distance, T);
+        RCLCPP_INFO(node_->get_logger(), "🛡️ [安全规划] 强制生成柔和版 Minimum Snap 轨迹! 距离: %.2fm, 耗时: %.1fs", distance, T);
 
         current_trajectory_ = planner_.generate_trajectory(start_pt, end_pt, T, 0.02);
         trajectory_index_ = 0;

@@ -7,30 +7,45 @@ MockDetector::MockDetector() {}
 
 cv::Rect MockDetector::detect(const cv::Mat& input_image)
 {
-    // ====== 这里是 Mock AI 的逻辑 ======
-    // 未来会把这段代码替换为: TFLite_Model.invoke(input_image)
-    
     cv::Mat gray, thresh;
-    // 1. 转为灰度图
     cv::cvtColor(input_image, gray, cv::COLOR_BGR2GRAY);
-    // 2. 寻找极暗的区域（模拟黑色的裂缝），阈值设为 50
     cv::threshold(gray, thresh, 120, 255, cv::THRESH_BINARY_INV);
     
+    // =========================================================================
+    // 🛡️ 工业级视觉优化 1：ROI 盲区遮罩 (Self-Occlusion Masking)
+    // 强制把画面边缘（可能出现机翼、螺旋桨的地方）涂黑，彻底屏蔽！
+    // =========================================================================
+    int w = thresh.cols;
+    int h = thresh.rows;
+    
+    // 屏蔽画面最上方 25% (通常是上方两个螺旋桨)
+    cv::rectangle(thresh, cv::Point(0, 0), cv::Point(w, h * 0.25), cv::Scalar(0), cv::FILLED);
+    // 屏蔽画面左右各 15% 的边缘
+    cv::rectangle(thresh, cv::Point(0, 0), cv::Point(w * 0.15, h), cv::Scalar(0), cv::FILLED);
+    cv::rectangle(thresh, cv::Point(w * 0.85, 0), cv::Point(w, h), cv::Scalar(0), cv::FILLED);
+    // 屏蔽画面最下方 10% (机腹起落架可能露出的地方)
+    cv::rectangle(thresh, cv::Point(0, h * 0.9), cv::Point(w, h), cv::Scalar(0), cv::FILLED);
+
     std::vector<std::vector<cv::Point>> contours;
-    // 3. 提取轮廓
     cv::findContours(thresh, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     
-    if (!contours.empty()) {
-        // 4. 找到面积最大的那条裂缝
-        auto largest_contour = *std::max_element(contours.begin(), contours.end(),
-            [](const auto& a, const auto& b) { return cv::contourArea(a) < cv::contourArea(b); });
-            
-        // 5. 返回它的 2D 边框！
-        return cv::boundingRect(largest_contour);
+    cv::Rect best_bbox(0, 0, 0, 0);
+    double max_area = 0;
+
+    // =========================================================================
+    // 🛡️ 工业级视觉优化 2：形态学面积滤波 (Area Filtering)
+    // 防止画面里有个很小的黑点(比如远处的噪点)引发打断。
+    // =========================================================================
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        // 只识别面积大于 500 个像素的有效方块/裂缝，并且排除可能占据整个屏幕的异常巨大黑影
+        if (area > 500 && area < (w * h * 0.5) && area > max_area) {
+            max_area = area;
+            best_bbox = cv::boundingRect(contour);
+        }
     }
     
-    // 如果没找到，返回一个面积为 0 的空框
-    return cv::Rect(0, 0, 0, 0); 
+    return best_bbox; 
 }
 
 } // namespace uav_vision
