@@ -25,6 +25,7 @@ add_library(vision_core SHARED
   src/detectors/tflite/tflite_detector.cpp   # <--- 新增的 TFLite 实现
   src/ros_nodes/camera_subscriber.cpp       # <-- ROS 包装
   src/filters/kalman_filter.cpp
+  src/filters/lite_sort.cpp   # <--- 新增 SORT
 )
 target_include_directories(vision_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

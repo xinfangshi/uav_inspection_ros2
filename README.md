@@ -143,7 +143,7 @@ graph TD
     
     CamNode -.->|"※ 依赖注入 (DI):<br>在 main 中可一键切换具体大脑"| MockAI
 ```
-- **3.视觉与边缘 AI 架构 (uav_vision)**
+- **4.空间代数与 3D 绝对定位架构 (3D Localization Logic)**
 ```mermaid
 graph TD
     classDef data fill:#fff3e0,stroke:#ff9800,stroke-width:2px;

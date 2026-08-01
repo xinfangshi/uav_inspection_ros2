@@ -12,7 +12,7 @@ public:
     MockDetector();
 
     //重写父类方法
-    cv::Rect detect(const cv::Mat& input_image) override;
+    std::vector<cv::Rect> detect(const cv::Mat& input_image) override;
 };
 
 } // namespace uav_vision

@@ -14,7 +14,7 @@ public:
     DnnDetector(const std::string& model_txt, const std::string& model_bin);
 
     // 真正的深度学习前向推理！
-    cv::Rect detect(const cv::Mat& input_image) override;
+    std::vector<cv::Rect> detect(const cv::Mat& input_image) override;
 
 private:
     cv::dnn::Net net_; // OpenCV DNN 核心网络对象

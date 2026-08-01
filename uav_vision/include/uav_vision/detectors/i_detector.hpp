@@ -20,7 +20,8 @@ public:
      * @param input_image 摄像头传入的 RGB 画面
      * @return cv::Rect 缺陷的 2D Bounding Box
      */
-    virtual cv::Rect detect(const cv::Mat& input_image) = 0;
+    // 返回画面中检测到的【所有】合法目标边框
+    virtual std::vector<cv::Rect> detect(const cv::Mat& input_image) = 0;
 };
 
 } // namespace uav_vision

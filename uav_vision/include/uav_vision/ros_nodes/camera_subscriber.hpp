@@ -15,6 +15,7 @@
 #include "uav_vision/detectors/i_detector.hpp"
 
 #include "uav_vision/filters/kalman_filter.hpp"  // <--- 防抖kalman_filter
+#include "uav_vision/filters/lite_sort.hpp" // 引入追踪器
 
 #include <sensor_msgs/msg/camera_info.hpp>
 
@@ -45,6 +46,7 @@ private:
 
      // 🔥 新增：卡尔曼滤波器实例
     uav_vision::filters::TargetKalmanFilter kf_;
+    uav_vision::filters::LiteSORT tracker_;
 
     // 专门用于倾听系统 TF 树的空间雷达！
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

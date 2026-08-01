@@ -47,10 +47,12 @@ int main(int argc, char * argv[])
 
     // 5. 不管是什么大脑，推理接口只有唯一的一个：detect！
     std::cout << "🧠 AI 正在分析画面...\n";
-    cv::Rect bbox = active_brain->detect(mock_image);
+    std::vector<cv::Rect> bboxes = active_brain->detect(mock_image);
     
     // 6. 绘制结果
-    if (bbox.area() > 0) {
+    if (!bboxes.empty()) {
+        cv::Rect bbox = bboxes[0]; // 先取第一个画图
+
         std::cout << "🎯 发现目标！坐标: X=" << bbox.x << ", Y=" << bbox.y << "\n";
         cv::rectangle(mock_image, bbox, cv::Scalar(0, 0, 255), 2);
         cv::putText(mock_image, "AI Detected (" + engine + ")", cv::Point(bbox.x, bbox.y - 10), 

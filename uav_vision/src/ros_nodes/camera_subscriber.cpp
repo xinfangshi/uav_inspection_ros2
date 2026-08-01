@@ -1,5 +1,6 @@
 #include "uav_vision/ros_nodes/camera_subscriber.hpp"
 
+
 namespace uav_vision
 {
 
@@ -47,8 +48,14 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
         cv::Mat rgb_frame = cv_ptr->image;
 
         if (!rgb_frame.empty()) {
-            cv::Rect bbox = detector_->detect(rgb_frame);
+            std::vector<cv::Rect> bboxes = detector_->detect(rgb_frame);
             geometry_msgs::msg::Point target_3d_msg;
+
+            // =================================================================
+            // 🔥 架构大招升级：废弃直接取 bboxes[0] 的做法，引入 SORT 多目标追踪！
+            // 给所有框洗个牌，打上唯一 ID，过滤掉闪烁的噪点！
+            // =================================================================
+            std::vector<filters::TrackedTarget> tracks = tracker_.update(bboxes);
 
             cv::Mat depth_frame;
             {
@@ -56,15 +63,39 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 if (!latest_depth_frame_.empty()) depth_frame = latest_depth_frame_.clone();
             }
 
-            if (bbox.area() > 0) {
-                cv::rectangle(rgb_frame, bbox, cv::Scalar(0, 0, 255), 2);
-                int u = bbox.x + bbox.width / 2;
-                int v = bbox.y + bbox.height / 2;
+            // 我们选取面积最大的一个靠谱目标作为无人机的【主追踪目标】
+            int primary_id = -1;
+            cv::Rect primary_bbox(0, 0, 0, 0);
+            double max_area = 0;
+
+            for (const auto& trk : tracks) {
+                // 画出所有带有 ID 的追踪框 (浅蓝色)
+                cv::rectangle(rgb_frame, trk.bbox, cv::Scalar(255, 200, 0), 2);
+                cv::putText(rgb_frame, "ID: " + std::to_string(trk.id), 
+                            cv::Point(trk.bbox.x, trk.bbox.y - 10), 
+                            cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 200, 0), 2);
+
+                // 打擂台：找出画面里最大的目标作为第一优先级
+                if (trk.bbox.area() > max_area) {
+                    max_area = trk.bbox.area();
+                    primary_bbox = trk.bbox;
+                    primary_id = trk.id;
+                }
+            }
+
+            // 如果成功锁定了主目标
+            if (primary_id != -1) {
+                // 将主目标画成醒目的大红框！
+                cv::rectangle(rgb_frame, primary_bbox, cv::Scalar(0, 0, 255), 3);
+                
+                int u = primary_bbox.x + primary_bbox.width / 2;
+                int v = primary_bbox.y + primary_bbox.height / 2;
 
                 if (!depth_frame.empty()) {
                     u = std::clamp(u, 0, depth_frame.cols - 1);
                     v = std::clamp(v, 0, depth_frame.rows - 1);
                     
+                    // =========================================================
                     // 🛡️ 工业级抗噪测距：取中心 5x5 区域的有效深度【中位数值】！
                     // =========================================================
                     int radius = 2; // 5x5 的邻域
@@ -96,72 +127,71 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
                         "🔍 [Debug] 5x5区域获取有效深度点 %zu 个，中值 Z = %f", valid_depths.size(), Z);
 
-                    
                     if (std::isfinite(Z)) {
                         // 🔥 架构师级防爆锁：如果还没拿到内参，坚决不算 3D 坐标！
                         if (!camera_info_received_) {
                             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "⏳ 正在等待真实相机内参...");
                             target_3d_msg.z = -1.0;
                         } else {
-                        // 动态加载真实的硬件光学参数！
-                        float fx = fx_.load();
-                        float fy = fy_.load();
-                        float cx = cx_.load();
-                        float cy = cy_.load();
+                            // 动态加载真实的硬件光学参数！
+                            float fx = fx_.load();
+                            float fy = fy_.load();
+                            float cx = cx_.load();
+                            float cy = cy_.load();
 
-                        // 原始观测坐标 (带高频抖动噪声)
-                        double raw_cam_x = (u - cx) * Z / fx;
-                        double raw_cam_y = (v - cy) * Z / fy;
-                        double raw_cam_z = Z; 
-                        
-                        // =========================================================
-                        // 🛡️ 卡尔曼滤波介入：洗净噪声！
-                        // =========================================================
-                        kf_.predict(); // 状态预测
-
-                        if (!kf_.is_initialized()) {
-                            kf_.init(raw_cam_x, raw_cam_y, raw_cam_z);
-                        } else {
-                            kf_.update(raw_cam_x, raw_cam_y, raw_cam_z); // 观测融合
-                        }
-
-                        // 取出被洗得极其纯净的最佳坐标
-                        Eigen::Vector3d best_state = kf_.get_state();
-
-                        // 空间代数大变身 (使用滤波后的最佳坐标)
-                        geometry_msgs::msg::PointStamped pt_cam;
-                        pt_cam.header.frame_id = "camera_link";
-                        pt_cam.header.stamp.sec = 0;
-                        pt_cam.header.stamp.nanosec = 0;
-                        
-                        // ROS坐标系与相机坐标系转换
-                        pt_cam.point.x = best_state.z();
-                        pt_cam.point.y = -best_state.x();
-                        pt_cam.point.z = -best_state.y();
-
-                        try {
-                            // TF2 矩阵绝对映射
-                            auto pt_map = tf_buffer_->transform(pt_cam, "map", tf2::durationFromSec(0.1));
-
-                            target_3d_msg.x = pt_map.point.x;
-                            target_3d_msg.y = pt_map.point.y;
-                            target_3d_msg.z = pt_map.point.z; 
-
-                            cv::putText(rgb_frame, "Map X:" + cv::format("%.2f", pt_map.point.x) + " Y:" + cv::format("%.2f", pt_map.point.y), 
-                                        cv::Point(bbox.x, bbox.y - 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0), 2);
+                            // 原始观测坐标 (带高频抖动噪声)
+                            double raw_cam_x = (u - cx) * Z / fx;
+                            double raw_cam_y = (v - cy) * Z / fy;
+                            double raw_cam_z = Z; 
                             
-                            // 打印极其稳定的绝对坐标
-                            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                                "🌍 [绝对定位+KF滤波] 目标地球坐标: X=%.2fm, Y=%.2fm, Z=%.2fm", 
-                                pt_map.point.x, pt_map.point.y, pt_map.point.z);
+                            // =========================================================
+                            // 🛡️ 卡尔曼滤波介入：洗净噪声！(仅针对锁定的主目标洗数据)
+                            // =========================================================
+                            kf_.predict(); // 状态预测
+
+                            if (!kf_.is_initialized()) {
+                                kf_.init(raw_cam_x, raw_cam_y, raw_cam_z);
+                            } else {
+                                kf_.update(raw_cam_x, raw_cam_y, raw_cam_z); // 观测融合
+                            }
+
+                            // 取出被洗得极其纯净的最佳坐标
+                            Eigen::Vector3d best_state = kf_.get_state();
+
+                            // 空间代数大变身 (使用滤波后的最佳坐标)
+                            geometry_msgs::msg::PointStamped pt_cam;
+                            pt_cam.header.frame_id = "camera_link";
+                            pt_cam.header.stamp.sec = 0;
+                            pt_cam.header.stamp.nanosec = 0;
+                            
+                            // ROS坐标系与相机坐标系转换
+                            pt_cam.point.x = best_state.z();
+                            pt_cam.point.y = -best_state.x();
+                            pt_cam.point.z = -best_state.y();
+
+                            try {
+                                // TF2 矩阵绝对映射
+                                auto pt_map = tf_buffer_->transform(pt_cam, "map", tf2::durationFromSec(0.1));
+
+                                target_3d_msg.x = pt_map.point.x;
+                                target_3d_msg.y = pt_map.point.y;
+                                target_3d_msg.z = pt_map.point.z; 
+
+                                cv::putText(rgb_frame, "Map X:" + cv::format("%.2f", pt_map.point.x) + " Y:" + cv::format("%.2f", pt_map.point.y), 
+                                            cv::Point(primary_bbox.x, primary_bbox.y - 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0), 2);
                                 
-                        } catch (const tf2::TransformException & ex) {
-                            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
-                                "⚠️ 空间坐标树未就绪: %s", ex.what());
-                            // 🔥🔥🔥 核心修复 1：绝对不允许把 0.0, 0.0 漏出去！！！
-                            target_3d_msg.z = -1.0; 
+                                // 打印极其稳定的绝对坐标
+                                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
+                                    "🌍 [绝对定位+KF滤波] 主目标(ID:%d) 地球坐标: X=%.2fm, Y=%.2fm, Z=%.2fm", 
+                                    primary_id, pt_map.point.x, pt_map.point.y, pt_map.point.z);
+                                    
+                            } catch (const tf2::TransformException & ex) {
+                                RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000, 
+                                    "⚠️ 空间坐标树未就绪: %s", ex.what());
+                                // 🔥🔥🔥 核心修复 1：绝对不允许把 0.0, 0.0 漏出去！！！
+                                target_3d_msg.z = -1.0; 
+                            }
                         }
-                    }
                     } else {
                         target_3d_msg.z = -1.0; 
                     }
@@ -170,7 +200,7 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 }
             } else {
                 target_3d_msg.z = -1.0;
-                // 🔥 如果目标丢失，立刻重置滤波器！防止下次看错！
+                // 🔥 如果主目标丢失，立刻重置滤波器！防止下次看错！
                 kf_.reset();
             }
 

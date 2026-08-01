@@ -17,7 +17,7 @@ public:
     TFLiteDetector(const std::string& model_path);
     ~TFLiteDetector() override = default;
 
-    cv::Rect detect(const cv::Mat& input_image) override;
+    std::vector<cv::Rect> detect(const cv::Mat& input_image) override;
 
 private:
     // TFLite 核心组件
