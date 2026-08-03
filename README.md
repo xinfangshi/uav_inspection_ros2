@@ -151,36 +151,50 @@ graph TD
     classDef tf fill:#fce4ec,stroke:#9c27b0,stroke-width:2px;
     classDef ros fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
 
-    subgraph "👁️ L1: 感知输入层 (承接 AI 视觉)"
+    subgraph "👁️ L1: 感知源数据 (Perception Source)"
         BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector 大脑"]:::data
         DepthMap["🌌 实时深度图 (32FC1)<br>来自 ros_gz_bridge"]:::data
+        CamInfo["📷 动态相机内参<br>(fx, fy, cx, cy)"]:::data
+        PX4Odom["🛸 PX4 里程计数据<br>⚠️【NED坐标系 (北东地)】"]:::data
     end
 
-    subgraph "🧠 L2: 空间反解与滤波层 (C++ 算法)"
-        MedianFilter["📏 区域中值滤波算法<br>(5x5 ROI 剔除 NaN/Inf 噪点)"]:::algo
-        Pinhole["📷 针孔相机反投影<br>(基于内参 fx, fy, cx, cy)"]:::algo
-        Kalman["🛡️ 目标卡尔曼滤波器<br>(Linear KF 过滤悬停高频震荡)"]:::algo
+    subgraph "🌳 L2: 空间坐标树维护 (TF2 Broadcaster)"
+        NED2ENU["🔄 坐标转换算法<br>(NED -> ENU)"]:::algo
+        TFMap["🌍 map<br>(地球绝对坐标系)"]:::tf
+        TFBase["🛸 base_link<br>(无人机本体)"]:::tf
+        TFCamera["📷 camera_link<br>(相机物理外壳)"]:::tf
+        TFOptical["👁️ camera_optical_link<br>(OpenCV 光学坐标系)"]:::tf
+        
+        PX4Odom -->|"[1] 获取原始位姿"| NED2ENU
+        
+        TFMap -.->|"[2] 发布动态 TF (基于ENU算法)"| TFBase
+        NED2ENU -.->|"驱动"| TFMap
+        
+        TFBase -.->|"[3] 发布静态平移 (机架外参)"| TFCamera
+        TFCamera -.->|"[4] 发布静态旋转 (FLU -> 光学)"| TFOptical
     end
 
-    subgraph "🌐 L3: 绝对坐标映射层 (ROS 2 TF)"
-        TFTree["🌳 动态坐标树 (TF2 Buffer)<br>map -> base_link -> camera_link"]:::tf
-        Transform["🔄 矩阵相乘变换<br>(消除机身 Pitch/Roll 倾角误差)"]:::tf
+    subgraph "🧠 L3: 视觉空间反解核心 (Camera Subscriber)"
+        MedianFilter["📏 5x5 中值滤波提取深度 Z"]:::algo
+        Pinhole["📐 针孔反投影<br>算出光学系 3D 坐标 (Xc,Yc,Zc)"]:::algo
+        Transform["🔄 TF2 矩阵相乘<br>自动消除机身 Pitch/Roll 倾角"]:::algo
+        Kalman["🛡️ 线性卡尔曼滤波器<br>(仅在地球系过滤物理噪点)"]:::algo
+        
+        BBox -->|"[5] 提供像素中心"| MedianFilter
+        DepthMap -->|"[5] 提供物理距离"| MedianFilter
+        
+        MedianFilter -->|"[6] 提取深度 Z"| Pinhole
+        CamInfo -->|"[6] 注入动态内参"| Pinhole
+        
+        Pinhole -->|"[7] 赋予 TFOptical 坐标点"| Transform
+        TFOptical -.->|"[8] 提供系统树完整矩阵"| Transform
+        Transform -->|"[9] 映射出 Map 系地球坐标"| Kalman
     end
 
-    subgraph "📡 L4: 具身智能输出层"
-        Pub["📢 广播 3D 绝对坐标<br>(/vision/target_3d_position)"]:::ros
+    subgraph "📡 L4: 具身智能闭环输出"
+        Pub["📢 广播最纯净 3D 地球绝对坐标<br>(/vision/target_3d_position)"]:::ros
+        Kalman ==>|"[10] 输出平滑绝对坐标"| Pub
     end
-
-    %% 核心数据流连线 (使用安全语法)
-    BBox ==>|"[1] 提供中心像素坐标"| MedianFilter
-    DepthMap ==>|"[1] 提供物理测距数据"| MedianFilter
-    
-    MedianFilter -.->|"[2] 提取真实距离 Z"| Pinhole
-    Pinhole -.->|"[3] 输出相机坐标系 (Xc, Yc, Zc)"| Kalman
-    Kalman -.->|"[4] 输出平滑后的相机 3D 坐标"| Transform
-    
-    TFTree ==>|"[5] 提供无人机实时位姿矩阵"| Transform
-    Transform ==>|"[6] 解算出地球绝对坐标 (Xw, Yw, Zw)"| Pub
 ```
 
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
