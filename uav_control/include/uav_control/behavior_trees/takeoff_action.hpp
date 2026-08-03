@@ -47,6 +47,8 @@ private:
     bool armed_;
     float start_x_;
     float start_y_;
+
+    int settle_counter_;
 };
 
 } // namespace behavior_trees

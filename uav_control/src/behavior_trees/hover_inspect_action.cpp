@@ -7,6 +7,12 @@ HoverInspectAction::HoverInspectAction(const std::string& name, const BT::NodeCo
     : BT::StatefulActionNode(name, config), node_(node), odom_received_(false) {
     offboard_control_mode_publisher_ = node_->create_publisher<px4_msgs::msg::OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
     trajectory_setpoint_publisher_ = node_->create_publisher<px4_msgs::msg::TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
+
+    // 🔥 引入极其稳定的 Transient Local 策略，确保 100% 必达！
+    rclcpp::QoS inspected_qos(10);
+    inspected_qos.transient_local();
+    inspected_pub_ = node_->create_publisher<geometry_msgs::msg::Point>("/vision/inspected_target", inspected_qos);
+
     odom_subscriber_ = node_->create_subscription<px4_msgs::msg::VehicleOdometry>(
         "/fmu/out/vehicle_odometry", rclcpp::QoS(10).best_effort(), 
         std::bind(&HoverInspectAction::odom_callback, this, std::placeholders::_1));
@@ -26,26 +32,28 @@ double HoverInspectAction::get_yaw_from_quaternion(float w, float x, float y, fl
 }
 
 BT::NodeStatus HoverInspectAction::onStart() {
-    if (!odom_received_) {
-        RCLCPP_WARN(node_->get_logger(), "[HoverInspect] ⏳ 等待里程计...");
-        return BT::NodeStatus::RUNNING;
-    }
+    if (!odom_received_) return BT::NodeStatus::RUNNING;
 
-    // 初始化为第一阶段：柔性刹车
-    current_state_ = BRAKING;
-    stable_hold_counter_ = 0;
-    hover_counter_ = 0;
-
-    double target_x = 0, target_y = 0;
-    if (config().blackboard->get<double>("defect_x", target_x) && config().blackboard->get<double>("defect_y", target_y)) {
-        target_yaw_ = std::atan2(target_y - current_y_, target_x - current_x_);
+    brake_yaw_ = current_yaw_;
+    
+    // 🔥 核心修复 1A：在打断的第 0 毫秒，立刻读取并锁死目标坐标！
+    if (config().blackboard->get<double>("defect_x", locked_defect_x_) && 
+        config().blackboard->get<double>("defect_y", locked_defect_y_) &&
+        config().blackboard->get<double>("defect_z", locked_defect_z_)) {
+        
+        double dist_2d = std::sqrt(std::pow(locked_defect_x_ - current_x_, 2) + std::pow(locked_defect_y_ - current_y_, 2));
+        if (dist_2d < 2.5) {
+            target_yaw_ = current_yaw_; 
+        } else {
+            target_yaw_ = std::atan2(locked_defect_y_ - current_y_, locked_defect_x_ - current_x_);
+        }
     } else {
         target_yaw_ = current_yaw_;
     }
 
-    RCLCPP_INFO(node_->get_logger(), "📸 [视觉伺服] 触发打断！[阶段1] 开启速度控制进行平滑刹车...");
-    // 🔥 核心修复 2A：记住刹车时的初始朝向！
-    brake_yaw_ = current_yaw_; 
+    current_state_ = BRAKING;
+    stable_hold_counter_ = 0; hover_counter_ = 0;
+    RCLCPP_INFO(node_->get_logger(), "📸 [视觉伺服] 触发！锁死目标坐标 (X:%.2f, Y:%.2f)，开始平滑刹车...", locked_defect_x_, locked_defect_y_);
     return BT::NodeStatus::RUNNING;
 }
 
@@ -97,11 +105,18 @@ BT::NodeStatus HoverInspectAction::onRunning() {
         hover_counter_++;
         if (hover_counter_ > 150) { // 3秒拍摄
             RCLCPP_INFO(node_->get_logger(), "✅ [HoverInspect] 拍摄完成！目标特征已保存。");
+            
+            // 🔥 核心修复 1B：使用锁死的真实坐标进行广播拉黑！
+            geometry_msgs::msg::Point inspected_msg;
+            inspected_msg.x = locked_defect_x_; 
+            inspected_msg.y = locked_defect_y_; 
+            inspected_msg.z = locked_defect_z_;
+            inspected_pub_->publish(inspected_msg);
+            
             config().blackboard->set<bool>("just_inspected", true);
             return BT::NodeStatus::SUCCESS;
         }
     }
-
     return BT::NodeStatus::RUNNING;
 }
 

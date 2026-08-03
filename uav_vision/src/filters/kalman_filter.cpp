@@ -10,8 +10,9 @@ TargetKalmanFilter::TargetKalmanFilter() : is_initialized_(false) {
     Q_ = Eigen::Matrix3d::Identity() * 0.001;
 
     // R: 观测噪声 (AI 画框的抖动 + 深度相机的红外噪点 + 飞机的悬停微震)
-    // 设得比较大，意味着我们不轻易相信单帧传感器的跳变！
-    R_ = Eigen::Matrix3d::Identity() * 0.5;
+    // 🔥 核心修复 2：将观测噪声 R 从 0.5 暴力调大到 5.0 甚至 10.0！
+    // 这意味着我们告诉 KF：“随着飞机移动，视觉算出的坐标极其不可靠（视角畸变），你给我死死守住它最初的平滑位置！”
+    R_ = Eigen::Matrix3d::Identity() * 5.0;
 
     I_ = Eigen::Matrix3d::Identity();
 }

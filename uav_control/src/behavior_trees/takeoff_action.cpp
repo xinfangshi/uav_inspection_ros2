@@ -23,6 +23,7 @@ void TakeoffAction::odom_callback(const px4_msgs::msg::VehicleOdometry::SharedPt
 }
 
 BT::NodeStatus TakeoffAction::onStart() {
+    settle_counter_ = 0;
     setpoint_counter_ = 0; armed_ = false;
     RCLCPP_INFO(node_->get_logger(), "[Takeoff] ✈️ 起飞节点激活，等待里程计信号...");
     return BT::NodeStatus::RUNNING;
@@ -56,8 +57,14 @@ BT::NodeStatus TakeoffAction::onRunning() {
 
     float current_alt = -current_z_; 
     if (armed_ && std::abs(current_alt - altitude) < 0.3) {
-        RCLCPP_INFO(node_->get_logger(), "[Takeoff] ✅ 起飞完成，实际到达高度: %.2f 米", current_alt);
-        return BT::NodeStatus::SUCCESS;
+        // 🔥 修复：到达高度后，强行霸占线程悬停 2 秒，彻底消除起飞余震！
+        settle_counter_++;
+        if (settle_counter_ > 100) { // 50Hz * 2s
+            RCLCPP_INFO(node_->get_logger(), "[Takeoff] ✅ 起飞完成，姿态已镇定，切入巡检流！");
+            return BT::NodeStatus::SUCCESS;
+        }
+    } else {
+        settle_counter_ = 0; // 没到高度，镇定计数器清零
     }
     return BT::NodeStatus::RUNNING;
 }
