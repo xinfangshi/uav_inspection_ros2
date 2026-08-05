@@ -196,7 +196,60 @@ graph TD
         Kalman ==>|"[10] 输出平滑绝对坐标"| Pub
     end
 ```
+- **5.视觉伺服闭环架构图 (Visual Servoing Architecture)**
+```mermaid
+graph TD
+    classDef vision fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
+    classDef odom fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef logic fill:#fce4ec,stroke:#9c27b0,stroke-width:2px;
+    classDef control fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
 
+    subgraph "👁️ 1. 绝对目标定位 (Perception & TF2)"
+        AI["🎯 AI 识别 2D 像素<br/><b>camera_optical_link 系</b>"]:::vision
+        Depth["📏 提取深度 Z"]:::vision
+        TF2["🔄 TF2 空间树<br/>(已修复姿态矩阵连乘)<br/>camera_optical → map"]:::vision
+        KF["🛡️ 卡尔曼滤波平滑"]:::vision
+        TargetCoord[/"📍 目标绝对地球坐标<br/>(Target_X, Target_Y) 在 <b>map</b> 系"/]:::vision
+
+        AI --> Depth --> TF2 --> KF --> TargetCoord
+    end
+
+    subgraph "🛸 2. 无人机自身状态 (Self-Localization)"
+        PX4Odom["🛰️ PX4 实时里程计<br/><b>NED 系</b>"]:::odom
+        NED2ENU["🔁 NED → ENU 直接转换<br/>(位置 & 航向)"]:::odom
+        DroneCoord[/"🚁 飞机绝对地球坐标<br/>(Drone_X, Drone_Y, Current_Yaw) 在 <b>map</b> 系"/]:::odom
+        
+        PX4Odom -->|"原始 NED 数据"| NED2ENU -->|"map 系坐标"| DroneCoord
+    end
+
+    subgraph "🧠 3. 行为树中枢逻辑 (Blackboard & BT)"
+        WriteBB["✍️ 写入黑板 (Blackboard)"]:::logic
+        CalcDist["📐 计算 2D 距离<br>Distance = sqrt(dX^2 + dY^2)"]:::logic
+        CalcYaw["🧭 计算目标偏航角<br>Target_Yaw = atan2(dY, dX) <b>在 map 系</b>"]:::logic
+        
+        TargetCoord -->|"触发警报"| WriteBB
+        WriteBB --> CalcDist
+        WriteBB --> CalcYaw
+        DroneCoord --> CalcDist
+        DroneCoord --> CalcYaw
+    end
+
+    subgraph "🦾 4. 主动视觉伺服控制 (HoverInspect Action)"
+        StateBrake["🛑 阶段 1: 纯速度控制刹车<br>(V = 0, Yaw = 锁定当前)"]:::control
+        StateAlign["🎯 阶段 2: 柔性旋转对焦<br>(V = 0, Yaw = Target_Yaw <b>ENU</b>)"]:::control
+        ENU2NED["🔁 ENU → NED<br/>逆向转换"]:::control
+        StateShoot["📸 阶段 3: 高清曝光拍摄<br>(满足误差 < 5度, 驻留 3秒)"]:::control
+        Blacklist["🚫 目标拉黑去重<br>(加入 3 米屏蔽库)"]:::control
+
+        CalcDist -->|"> 2.5m 允许转头"| StateBrake
+        CalcYaw -->|"传入偏航角指令 (ENU)"| StateAlign
+        StateBrake -->|"速度 < 0.3m/s"| StateAlign
+        StateAlign -->|"稳定超过 1 秒"| StateShoot
+        StateAlign -.->|"高频控制指令 (ENU Yaw)"| ENU2NED
+        ENU2NED -.->|"NED Yaw"| PX4Odom
+        StateShoot -->|"拍摄落盘完成"| Blacklist
+    end
+```
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*
 
 - **Simulation**: Gazebo Harmonic
