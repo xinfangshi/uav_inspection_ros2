@@ -150,30 +150,36 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 }
 
                 if (std::isfinite(Z)) {
-                    // 针孔相机逆投影：从 2D 像素坐标反解 3D 相机坐标系坐标
-                    double raw_cam_x = (u - cx) * Z / fx;
-                    double raw_cam_y = (v - cy) * Z / fy;
-                    double raw_cam_z = Z; 
+                    // 针孔相机逆投影：从 2D 像素坐标反解出原始的光学 3D 坐标
+                    double raw_opt_x = (u - cx) * Z / fx;
+                    double raw_opt_y = (v - cy) * Z / fy;
+                    double raw_opt_z = Z; 
 
-                    geometry_msgs::msg::PointStamped pt_cam;
-                    pt_cam.header.frame_id = "camera_link";
-                    pt_cam.header.stamp.sec = 0;
-                    pt_cam.header.stamp.nanosec = 0;
-                    pt_cam.point.x = raw_cam_z;
-                    pt_cam.point.y = -raw_cam_x;
-                    pt_cam.point.z = -raw_cam_y;
+                    // 构造 PointStamped 消息用于 TF2 坐标变换
+                    geometry_msgs::msg::PointStamped pt_opt;
+                    pt_opt.header.frame_id = "camera_optical_link"; 
+                    // 产生的微小时间差跳动，将全部交由下方的卡尔曼滤波器 (KF) 去碾碎平滑！
+                    pt_opt.header.stamp.sec = 0;
+                    pt_opt.header.stamp.nanosec = 0;
+                    
+                    // 🔥 核心重构 2：不用再手工交换轴向和加负号了！原汁原味地塞进去！
+                    pt_opt.point.x = raw_opt_x;
+                    pt_opt.point.y = raw_opt_y;
+                    pt_opt.point.z = raw_opt_z; 
 
                     try {
                         // =========================================================
-                        // 🔥 架构颠覆：先做 TF 变换！将带有物理抖动噪声的相机坐标，转化为真实的地球坐标！
+                        // 🔥 架构巅峰：调用 TF2 矩阵绝对映射！
+                        // 它会自动完成 光学->物理->机身(ENU)->地球(Map) 的四级跳跃！
                         // =========================================================
-                        auto pt_map_raw = tf_buffer_->transform(pt_cam, "map", tf2::durationFromSec(0.1));
+                        auto pt_map_raw = tf_buffer_->transform(pt_opt, "map", tf2::durationFromSec(0.1));
 
                         // 空间黑名单校验 (防重影去重)
                         bool is_blacklisted = false;
                         {
                             std::lock_guard<std::mutex> lock(memory_mutex_);
                             for (const auto& inspected_pt : inspected_targets_) {
+                                // 用真实的地球坐标进行欧式距离比对
                                 double dist = std::sqrt(std::pow(pt_map_raw.point.x - inspected_pt.x(), 2) +
                                                         std::pow(pt_map_raw.point.y - inspected_pt.y(), 2) +
                                                         std::pow(pt_map_raw.point.z - inspected_pt.z(), 2));
@@ -241,7 +247,7 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
 
                     // 🔥 核心修复 2：如果一帧之内，坐标跳变超过 2.5 米，绝对是飞机急刹车引起的物理畸变！
                     // 直接丢弃这个脏数据，拒绝融合！保护 KF 状态的纯洁性！
-                    if (jump_dist < 2.5) {
+                    if (jump_dist < 2.0) {
                         kf_.update(best_raw_map_x, best_raw_map_y, best_raw_map_z); 
                     } else {
                         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
@@ -249,9 +255,9 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                     }
                 }
 
-                // 取出被洗得极其纯净的最佳地球坐标
+                // 取出被洗得极其纯净的最佳地球绝对坐标
                 Eigen::Vector3d best_state_map = kf_.get_state();
-
+                // 🔥 核心重构 3：已经是地球坐标了，直接拿来用，不需要转来转去！
                 target_3d_msg.x = best_state_map.x();
                 target_3d_msg.y = best_state_map.y();
                 target_3d_msg.z = best_state_map.z(); 

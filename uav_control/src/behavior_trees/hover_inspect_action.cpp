@@ -20,10 +20,31 @@ HoverInspectAction::HoverInspectAction(const std::string& name, const BT::NodeCo
 
 BT::PortsList HoverInspectAction::providedPorts() { return {}; }
 
+// 1. 收到 PX4 数据时，立刻翻译为 ENU！
 void HoverInspectAction::odom_callback(const px4_msgs::msg::VehicleOdometry::SharedPtr msg) {
-    current_x_ = msg->position[0]; current_y_ = msg->position[1]; current_z_ = msg->position[2];
-    current_vx_ = msg->velocity[0]; current_vy_ = msg->velocity[1];
-    current_yaw_ = get_yaw_from_quaternion(msg->q[0], msg->q[1], msg->q[2], msg->q[3]);
+    current_x_ = msg->position[1];  // ENU X
+    current_y_ = msg->position[0];  // ENU Y
+    current_z_ = -msg->position[2]; // ENU Z
+    current_vx_ = msg->velocity[1];
+    current_vy_ = msg->velocity[0];
+    
+    // =========================================================
+    // 🔥 核心修复：先用一个普通的 double 变量算好角度，避开 atomic 运算符限制！
+    // =========================================================
+    double ned_yaw = get_yaw_from_quaternion(msg->q[0], msg->q[1], msg->q[2], msg->q[3]);
+    double enu_yaw = M_PI / 2.0 - ned_yaw; 
+    
+    // 在局部变量里做 while 加减法，非常安全！
+    while (enu_yaw > M_PI) enu_yaw -= 2.0 * M_PI;
+    while (enu_yaw < -M_PI) enu_yaw += 2.0 * M_PI;
+    
+    // 算好归一化之后，一次性原子赋值给 current_yaw_！
+    current_yaw_ = static_cast<float>(enu_yaw); 
+    // // 1. 打印从 PX4 读到的原生 NED Yaw，以及我们转换后的 ENU Yaw
+    // RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
+    // "🔍 [Odom 探测] PX4 原生 NED Yaw: %.2f | 转换后 ROS ENU Yaw: %.2f", 
+    // ned_yaw, current_yaw_.load());
+    
     odom_received_ = true;
 }
 
@@ -50,6 +71,14 @@ BT::NodeStatus HoverInspectAction::onStart() {
     } else {
         target_yaw_ = current_yaw_;
     }
+    //
+    RCLCPP_INFO(node_->get_logger(), 
+    "🎯 [锁定探测] 目标坐标: (X:%.2f, Y:%.2f), 飞机坐标: (X:%.2f, Y:%.2f)", 
+    locked_defect_x_, locked_defect_y_, 
+    current_x_.load(), current_y_.load());
+    RCLCPP_INFO(node_->get_logger(), 
+    "🎯 [锁定探测] 计算得出目标 ENU Yaw: %.2f, 刹车锁死 ENU Yaw: %.2f", 
+    target_yaw_, brake_yaw_);
 
     current_state_ = BRAKING;
     stable_hold_counter_ = 0; hover_counter_ = 0;
@@ -61,6 +90,10 @@ BT::NodeStatus HoverInspectAction::onRunning() {
     float speed = std::sqrt(current_vx_ * current_vx_ + current_vy_ * current_vy_);
     float yaw_error = std::abs(target_yaw_ - current_yaw_);
     if (yaw_error > M_PI) yaw_error = 2 * M_PI - yaw_error;
+    //
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
+    "⚖️ [误差探测] 当前状态: %d | 飞机 ENU Yaw: %.2f | 目标 ENU Yaw: %.2f | Yaw误差: %.2f", 
+    current_state_, current_yaw_.load(), target_yaw_, yaw_error);
 
     // =========================================================
     // 🛡️ 阶段 1：柔性刹车 (Velocity Control)
@@ -71,20 +104,20 @@ BT::NodeStatus HoverInspectAction::onRunning() {
         publish_trajectory_setpoint(0.0, 0.0, 0.0, brake_yaw_, true); 
         // 当物理速度降到 0.5m/s 以下，说明刹车基本完成，切入阶段 2
         if (speed < 0.5f) {
-            hover_x_ = current_x_; hover_y_ = current_y_; hover_z_ = current_z_; // 此时再锁死坐标！
             current_state_ = ALIGNING;
-            RCLCPP_INFO(node_->get_logger(), "📸 [视觉伺服] 刹车完毕！[阶段2] 锁定坐标，开始连续姿态稳定校验...");
+            RCLCPP_INFO(node_->get_logger(), "📸 [视觉伺服] 刹车完毕！[阶段2] 开始纯速度伺服，柔性旋转对焦...");
         }
     }
     // =========================================================
-    // 🛡️ 阶段 2：姿态稳定校验 (Position Control + Anti-Pendulum)
+    // 🛡️ 阶段 2：姿态稳定校验 (Pure Velocity Control + Yaw Alignment)
     // =========================================================
     else if (current_state_ == ALIGNING) {
-        publish_offboard_control_mode(true, false); // 开位置，关速度
-        publish_trajectory_setpoint(hover_x_, hover_y_, hover_z_, target_yaw_, false);
+        // 🔥 终极修复 3：彻底抛弃位置控制！全程使用速度 0 悬停，防止钟摆效应！
+        publish_offboard_control_mode(false, true); // 关位置，开速度
+        publish_trajectory_setpoint(0.0, 0.0, 0.0, target_yaw_, true); // 速度为0，缓慢转机头
 
         // 🔥 核心防抖算法：必须连续 50 帧 (1秒) 速度和偏航角都极小，才算彻底平稳！
-        if (speed < 0.2f && yaw_error < 0.1f) {
+        if (speed < 0.2f && yaw_error < 0.15f) {
             stable_hold_counter_++;
         } else {
             stable_hold_counter_ = 0; // 只要晃动一下，立刻重新倒计时！
@@ -99,8 +132,9 @@ BT::NodeStatus HoverInspectAction::onRunning() {
     // 🛡️ 阶段 3：高清拍摄倒计时 (Shooting)
     // =========================================================
     else if (current_state_ == SHOOTING) {
-        publish_offboard_control_mode(true, false);
-        publish_trajectory_setpoint(hover_x_, hover_y_, hover_z_, target_yaw_, false);
+        // 🔥 终极修复 4：拍摄期间也死死保持速度 0 控制，稳如泰山！
+        publish_offboard_control_mode(false, true);
+        publish_trajectory_setpoint(0.0, 0.0, 0.0, target_yaw_, true);
 
         hover_counter_++;
         if (hover_counter_ > 150) { // 3秒拍摄
@@ -132,18 +166,41 @@ void HoverInspectAction::publish_offboard_control_mode(bool position_control, bo
     offboard_control_mode_publisher_->publish(msg);
 }
 
+// 2. 发给 PX4 之前，翻译回 NED！
 void HoverInspectAction::publish_trajectory_setpoint(float x, float y, float z, float yaw, bool is_velocity_mode) {
     px4_msgs::msg::TrajectorySetpoint msg{};
-    // 🔥 PX4 规定：如果用速度模式，位置字段必须填 NaN！这是高级开发必知细节！
+    
+    // =========================================================
+    // 🔥 终极补丁 A：填补 ROS2 默认值陷阱！极其关键！
+    // 必须显式将不用到的控制量设为 NAN，否则它们默认为 0.0。
+    // PX4 收到 yawspeed=0.0 会与 target_yaw 发生控制器死锁，导致翻车！
+    // =========================================================
+    msg.acceleration = {NAN, NAN, NAN};
+    msg.jerk = {NAN, NAN, NAN};
+    msg.yawspeed = NAN; // 放开角速度限制，让 PX4 姿态环自行平滑转头！
+
     if (is_velocity_mode) {
         msg.position = {NAN, NAN, NAN};
-        msg.velocity = {x, y, z}; // 此时的 xyz 其实是传进来的速度(0,0,0)
+        msg.velocity = {y, x, -z}; // ENU to NED
     } else {
-        msg.position = {x, y, z};
-        msg.velocity = {NAN, NAN, NAN}; // 填 NaN 忽略速度
+        msg.position = {y, x, -z}; // ENU to NED
+        msg.velocity = {NAN, NAN, NAN};
     }
-    msg.yaw = yaw;
+    
+    // =========================================================
+    // 🔥 终极修复 5：严格归一化目标偏航角！彻底终结 PX4 发疯旋转！
+    // =========================================================
+    float ned_target_yaw = M_PI / 2.0 - yaw;
+    while (ned_target_yaw > M_PI) ned_target_yaw -= 2.0 * M_PI;
+    while (ned_target_yaw < -M_PI) ned_target_yaw += 2.0 * M_PI;
+    
+    msg.yaw = ned_target_yaw;    // ENU Yaw 转 NED Yaw (已归一化)
     msg.timestamp = node_->get_clock()->now().nanoseconds() / 1000;
+    //
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
+    "📤 [发送探测] 指令 ENU Yaw: %.2f => 逆向转换回 NED Yaw: %.2f", 
+    yaw, ned_target_yaw);
+
     trajectory_setpoint_publisher_->publish(msg);
 }
 
