@@ -1,5 +1,6 @@
 #include "uav_control/localization/tf_broadcaster.hpp"
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 
 namespace uav_control {
 namespace localization {
@@ -81,24 +82,38 @@ void TfBroadcaster::odom_callback(const px4_msgs::msg::VehicleOdometry::SharedPt
     t.transform.translation.y = msg->position[0];  // North
     t.transform.translation.z = -msg->position[2]; // Up
 
-    // 🔥 史诗级数学修复：四元数矩阵连乘！绝不手工交换！
-    tf2::Quaternion q_ned_to_frd(msg->q[1], msg->q[2], msg->q[3], msg->q[0]); // x,y,z,w
-    
-    tf2::Quaternion q_enu_to_ned;
-    q_enu_to_ned.setRPY(M_PI, 0.0, -M_PI/2.0); 
+    // =========================================================
+    // 🔥 核心修复：放弃四元数连乘，采用欧拉角逐轴物理映射
+    // 直接从 PX4 的 NED 四元数提取 FRD 欧拉角，再转换到 ENU
+    // =========================================================
 
-    tf2::Quaternion q_frd_to_flu;
-    q_frd_to_flu.setRPY(M_PI, 0.0, 0.0);
+    // 1. 提取 PX4 最原始的 NED 四元数 (注意 px4_msgs 的顺序是 x, y, z, w)
+    tf2::Quaternion q_ned(msg->q[1], msg->q[2], msg->q[3], msg->q[0]);
 
-    // 连乘组合：ENU -> NED -> FRD -> FLU
-    //四元数乘法 q1 * q2 表示先施加 q2 的旋转，再施加 q1 的旋转
-    tf2::Quaternion q_enu_to_flu = q_frd_to_flu * q_ned_to_frd * q_enu_to_ned;
-    q_enu_to_flu.normalize();
+    // 2. 将四元数转化为矩阵，并提取 FRD 机体欧拉角
+    tf2::Matrix3x3 m_ned(q_ned);
+    double roll_frd, pitch_frd, yaw_ned;
+    m_ned.getRPY(roll_frd, pitch_frd, yaw_ned);
 
-    t.transform.rotation.x = q_enu_to_flu.x();
-    t.transform.rotation.y = q_enu_to_flu.y();
-    t.transform.rotation.z = q_enu_to_flu.z();
-    t.transform.rotation.w = q_enu_to_flu.w();
+    // 3. 人类思维的手动物理映射
+    //    Roll: FRD 与 FLU 同轴同向，直接继承
+    double roll_flu = roll_frd;
+
+    //    Pitch: FRD 机头向上为正，FLU 机头向下为正 → 取反
+    double pitch_flu = -pitch_frd;
+
+    //    Yaw: NED 北为0顺时针 → ENU 东为0逆时针
+    double yaw_enu = M_PI_2 - yaw_ned;
+
+    // 4. 生成绝对干净的 ENU 空间四元数
+    tf2::Quaternion q_enu;
+    q_enu.setRPY(roll_flu, pitch_flu, yaw_enu);
+
+    // 赋值给广播器
+    t.transform.rotation.x = q_enu.x();
+    t.transform.rotation.y = q_enu.y();
+    t.transform.rotation.z = q_enu.z();
+    t.transform.rotation.w = q_enu.w();
 
     tf_broadcaster_->sendTransform(t);
 }

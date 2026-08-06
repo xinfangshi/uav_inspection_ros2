@@ -154,13 +154,21 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                     double raw_opt_x = (u - cx) * Z / fx;
                     double raw_opt_y = (v - cy) * Z / fy;
                     double raw_opt_z = Z; 
+                    // =========================================================
+                    // 📍 探针 1：针孔反投影数据 (检查原始深度和相机局部坐标)
+                    // =========================================================
+                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "🔍 [探针1 - 局部解算] 目标像素(u:%d, v:%d) | 原始深度 Z: %.2fm | 光学坐标(X:%.2f, Y:%.2f, Z:%.2f)",
+                    u, v, Z, raw_opt_x, raw_opt_y, raw_opt_z);
 
                     // 构造 PointStamped 消息用于 TF2 坐标变换
                     geometry_msgs::msg::PointStamped pt_opt;
                     pt_opt.header.frame_id = "camera_optical_link"; 
-                    // 产生的微小时间差跳动，将全部交由下方的卡尔曼滤波器 (KF) 去碾碎平滑！
-                    pt_opt.header.stamp.sec = 0;
-                    pt_opt.header.stamp.nanosec = 0;
+                    // // 产生的微小时间差跳动，将全部交由下方的卡尔曼滤波器 (KF) 去碾碎平滑！
+                    // pt_opt.header.stamp.sec = 0;
+                    // pt_opt.header.stamp.nanosec = 0;
+                    // ✅ 替换为这一行 (让 TF 时光倒流，回溯到拍照那一瞬间的飞机 Pitch 倾角)：
+                    pt_opt.header.stamp = msg->header.stamp;
                     
                     // 🔥 核心重构 2：不用再手工交换轴向和加负号了！原汁原味地塞进去！
                     pt_opt.point.x = raw_opt_x;
@@ -172,7 +180,32 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                         // 🔥 架构巅峰：调用 TF2 矩阵绝对映射！
                         // 它会自动完成 光学->物理->机身(ENU)->地球(Map) 的四级跳跃！
                         // =========================================================
-                        auto pt_map_raw = tf_buffer_->transform(pt_opt, "map", tf2::durationFromSec(0.1));
+                        // 📍 探针 2：抓取 TF 树那一瞬间的真实姿态 (极其致命的一环)
+                        // =========================================================
+                        geometry_msgs::msg::TransformStamped cam_tf = tf_buffer_->lookupTransform(
+                            "map", "camera_optical_link", pt_opt.header.stamp, tf2::durationFromSec(0.05));
+                        
+                        // 把四元数转成人类能看懂的欧拉角 (度数)
+                        tf2::Quaternion q(
+                            cam_tf.transform.rotation.x, cam_tf.transform.rotation.y, 
+                            cam_tf.transform.rotation.z, cam_tf.transform.rotation.w);
+                        tf2::Matrix3x3 m(q);
+                        double roll, pitch, yaw;
+                        m.getRPY(roll, pitch, yaw);
+                        
+                        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "🌐 [探针2 - TF姿态] TF树认为当时相机的位置: (X:%.2f, Y:%.2f, Z:%.2f) | 朝向角度: Roll=%.1f°, Pitch=%.1f°, Yaw=%.1f°",
+                            cam_tf.transform.translation.x, cam_tf.transform.translation.y, cam_tf.transform.translation.z,
+                            roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI);
+
+                        // =========================================================
+                        // 📍 探针 3：执行映射并输出最终的原始 MAP 坐标
+                        // =========================================================
+                        auto pt_map_raw = tf_buffer_->transform(pt_opt, "map", tf2::durationFromSec(0.05));
+
+                        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                            "🎯 [探针3 - 绝对映射] 射线打在地图上的原始坐标: X=%.2f, Y=%.2f, Z=%.2f",
+                            pt_map_raw.point.x, pt_map_raw.point.y, pt_map_raw.point.z);
 
                         // 空间黑名单校验 (防重影去重)
                         bool is_blacklisted = false;

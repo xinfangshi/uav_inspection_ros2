@@ -71,14 +71,14 @@ BT::NodeStatus HoverInspectAction::onStart() {
     } else {
         target_yaw_ = current_yaw_;
     }
-    //
-    RCLCPP_INFO(node_->get_logger(), 
-    "🎯 [锁定探测] 目标坐标: (X:%.2f, Y:%.2f), 飞机坐标: (X:%.2f, Y:%.2f)", 
-    locked_defect_x_, locked_defect_y_, 
-    current_x_.load(), current_y_.load());
-    RCLCPP_INFO(node_->get_logger(), 
-    "🎯 [锁定探测] 计算得出目标 ENU Yaw: %.2f, 刹车锁死 ENU Yaw: %.2f", 
-    target_yaw_, brake_yaw_);
+    // //
+    // RCLCPP_INFO(node_->get_logger(), 
+    // "🎯 [锁定探测] 目标坐标: (X:%.2f, Y:%.2f), 飞机坐标: (X:%.2f, Y:%.2f)", 
+    // locked_defect_x_, locked_defect_y_, 
+    // current_x_.load(), current_y_.load());
+    // RCLCPP_INFO(node_->get_logger(), 
+    // "🎯 [锁定探测] 计算得出目标 ENU Yaw: %.2f, 刹车锁死 ENU Yaw: %.2f", 
+    // target_yaw_, brake_yaw_);
 
     current_state_ = BRAKING;
     stable_hold_counter_ = 0; hover_counter_ = 0;
@@ -90,10 +90,10 @@ BT::NodeStatus HoverInspectAction::onRunning() {
     float speed = std::sqrt(current_vx_ * current_vx_ + current_vy_ * current_vy_);
     float yaw_error = std::abs(target_yaw_ - current_yaw_);
     if (yaw_error > M_PI) yaw_error = 2 * M_PI - yaw_error;
-    //
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
-    "⚖️ [误差探测] 当前状态: %d | 飞机 ENU Yaw: %.2f | 目标 ENU Yaw: %.2f | Yaw误差: %.2f", 
-    current_state_, current_yaw_.load(), target_yaw_, yaw_error);
+    // //
+    // RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
+    // "⚖️ [误差探测] 当前状态: %d | 飞机 ENU Yaw: %.2f | 目标 ENU Yaw: %.2f | Yaw误差: %.2f", 
+    // current_state_, current_yaw_.load(), target_yaw_, yaw_error);
 
     // =========================================================
     // 🛡️ 阶段 1：柔性刹车 (Velocity Control)
@@ -196,10 +196,10 @@ void HoverInspectAction::publish_trajectory_setpoint(float x, float y, float z, 
     
     msg.yaw = ned_target_yaw;    // ENU Yaw 转 NED Yaw (已归一化)
     msg.timestamp = node_->get_clock()->now().nanoseconds() / 1000;
-    //
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
-    "📤 [发送探测] 指令 ENU Yaw: %.2f => 逆向转换回 NED Yaw: %.2f", 
-    yaw, ned_target_yaw);
+    // //
+    // RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, 
+    // "📤 [发送探测] 指令 ENU Yaw: %.2f => 逆向转换回 NED Yaw: %.2f", 
+    // yaw, ned_target_yaw);
 
     trajectory_setpoint_publisher_->publish(msg);
 }

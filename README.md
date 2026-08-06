@@ -155,29 +155,29 @@ graph TD
         BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector 大脑"]:::data
         DepthMap["🌌 实时深度图 (32FC1)<br>来自 ros_gz_bridge"]:::data
         CamInfo["📷 动态相机内参<br>(fx, fy, cx, cy)"]:::data
-        PX4Odom["🛸 PX4 里程计数据<br>⚠️【NED坐标系 (北东地)】"]:::data
+        PX4Odom["🛸 PX4 里程计数据<br>【NED】"]:::data
     end
 
     subgraph "🌳 L2: 空间坐标树维护 (TF2 Broadcaster)"
-        NED2ENU["🔄 坐标转换算法<br>(NED -> ENU)"]:::algo
-        TFMap["🌍 map<br>(地球绝对坐标系)"]:::tf
-        TFBase["🛸 base_link<br>(无人机本体)"]:::tf
-        TFCamera["📷 camera_link<br>(相机物理外壳)"]:::tf
-        TFOptical["👁️ camera_optical_link<br>(OpenCV 光学坐标系)"]:::tf
+        NED2ENU["🔄 欧拉角物理映射<br>提取 FRD (Roll,Pitch,Yaw) → ENU FLU (Roll,-Pitch,π/2-Yaw)"]:::algo
+        TFMap["🌍 map<br>(地球绝对坐标系)【ENU】"]:::tf
+        TFBase["🛸 base_link<br>(无人机本体)【FLU】"]:::tf
+        TFCamera["📷 camera_link<br>(相机物理外壳)【FLU+平移】"]:::tf
+        TFOptical["👁️ camera_optical_link<br>(OpenCV 光学坐标系)【RDF】"]:::tf
         
-        PX4Odom -->|"[1] 获取原始位姿"| NED2ENU
+        PX4Odom -->|"[1] 获取原始 NED 四元数"| NED2ENU
         
-        TFMap -.->|"[2] 发布动态 TF (基于ENU算法)"| TFBase
+        TFMap -.->|"[2] 发布动态 TF：FRD 欧拉角 → ENU 下 FLU 欧拉角 (Roll不变, Pitch取反, Yaw=π/2-yaw_ned)"| TFBase
         NED2ENU -.->|"驱动"| TFMap
         
         TFBase -.->|"[3] 发布静态平移 (机架外参)"| TFCamera
-        TFCamera -.->|"[4] 发布静态旋转 (FLU -> 光学)"| TFOptical
+        TFCamera -.->|"[4] 发布静态旋转 (FLU → RDF)"| TFOptical
     end
 
     subgraph "🧠 L3: 视觉空间反解核心 (Camera Subscriber)"
         MedianFilter["📏 5x5 中值滤波提取深度 Z"]:::algo
-        Pinhole["📐 针孔反投影<br>算出光学系 3D 坐标 (Xc,Yc,Zc)"]:::algo
-        Transform["🔄 TF2 矩阵相乘<br>自动消除机身 Pitch/Roll 倾角"]:::algo
+        Pinhole["📐 针孔反投影<br>算出光学系 3D 坐标【RDF】"]:::algo
+        Transform["🔄 TF2 变换查询<br>⏱️ 时间轴对齐 (use_sim_time)<br>自动应用完整变换链补偿姿态"]:::algo
         Kalman["🛡️ 线性卡尔曼滤波器<br>(仅在地球系过滤物理噪点)"]:::algo
         
         BBox -->|"[5] 提供像素中心"| MedianFilter
@@ -300,7 +300,9 @@ ros2 run ros_gz_bridge parameter_bridge \
   /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image \
   /depth_camera@sensor_msgs/msg/Image[gz.msgs.Image \
   /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo \
+  /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
   --ros-args \
+  -p use_sim_time:=true \
   -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image:=/camera/image_raw \
   -r /depth_camera:=/camera/depth_image \
   -r /world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info:=/camera/camera_info
@@ -308,7 +310,7 @@ ros2 run ros_gz_bridge parameter_bridge \
 **【终端 4：启动 AI 视觉大脑】**
 ```bash
 source ~/ros2_ws/install/setup.bash
-ros2 run uav_vision camera_node tflite
+ros2 run uav_vision camera_node mock --ros-args -p use_sim_time:=true
 # 可选参数：tflite (硬核模型), dnn (OpenCV模型), mock (传统算子)
 ```
 **【终端 5：启动行为树控制中枢】**
