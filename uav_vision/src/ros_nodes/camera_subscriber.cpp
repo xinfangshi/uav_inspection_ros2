@@ -119,12 +119,27 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
             float fx = fx_.load(), fy = fy_.load(), cx = cx_.load(), cy = cy_.load();
 
             for (const auto& trk : tracks) {
+                // 1. 获取目标在高清 RGB 原图 (1920x1080) 上的真实中心像素
                 int u = trk.bbox.x + trk.bbox.width / 2;
                 int v = trk.bbox.y + trk.bbox.height / 2;
 
-                // 限制坐标点在图像边界内，防止数组越界
-                u = std::clamp(u, 0, depth_frame.cols - 1);
-                v = std::clamp(v, 0, depth_frame.rows - 1);
+                // 🔥 核心修复 1：保护原始高清坐标，绝不能用 depth_frame 去截断它！
+                u = std::clamp(u, 0, rgb_frame.cols - 1);
+                v = std::clamp(v, 0, rgb_frame.rows - 1);
+
+                // =========================================================
+                // 🔥 核心修复 2：计算 1080p 到 480p 的空间降维缩放比例
+                // =========================================================
+                double scale_x = static_cast<double>(depth_frame.cols) / rgb_frame.cols;
+                double scale_y = static_cast<double>(depth_frame.rows) / rgb_frame.rows;
+
+                // 映射出在深度图 (640x480) 上的实际取样坐标
+                int depth_u = static_cast<int>(u * scale_x);
+                int depth_v = static_cast<int>(v * scale_y);
+
+                // 限制深度坐标点在图像边界内，防止数组越界
+                depth_u = std::clamp(depth_u, 0, depth_frame.cols - 1);
+                depth_v = std::clamp(depth_v, 0, depth_frame.rows - 1);
 
                 // 🛡️ 工业级抗噪测距：取中心 5x5 区域的有效深度【中位数值】
                 int radius = 2; 
@@ -132,9 +147,11 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
 
                 for (int dy = -radius; dy <= radius; ++dy) {
                     for (int dx = -radius; dx <= radius; ++dx) {
-                        int nu = std::clamp(u + dx, 0, depth_frame.cols - 1);
-                        int nv = std::clamp(v + dy, 0, depth_frame.rows - 1);
+                        // 🔥 核心修复 3：查深度必须使用缩小映射后的 depth_u 和 depth_v！
+                        int nu = std::clamp(depth_u + dx, 0, depth_frame.cols - 1);
+                        int nv = std::clamp(depth_v + dy, 0, depth_frame.rows - 1);
                         float val = depth_frame.at<float>(nv, nu);
+                        
                         if (std::isfinite(val) && val > 0.1f && val < 50.0f) {
                             valid_depths.push_back(val);
                         }
@@ -150,10 +167,13 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 }
 
                 if (std::isfinite(Z)) {
-                    // 针孔相机逆投影：从 2D 像素坐标反解出原始的光学 3D 坐标
+                    // =========================================================
+                    // 🔥 核心修复 4：针孔逆投影，必须用回原始的 1080p 坐标 (u, v) 
+                    // 以及 1080p 的相机内参 (cx, cy, fx, fy)！
+                    // =========================================================
                     double raw_opt_x = (u - cx) * Z / fx;
                     double raw_opt_y = (v - cy) * Z / fy;
-                    double raw_opt_z = Z; 
+                    double raw_opt_z = Z;
                     // =========================================================
                     // 📍 探针 1：针孔反投影数据 (检查原始深度和相机局部坐标)
                     // =========================================================

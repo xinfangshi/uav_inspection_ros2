@@ -150,50 +150,66 @@ graph TD
     classDef algo fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
     classDef tf fill:#fce4ec,stroke:#9c27b0,stroke-width:2px;
     classDef ros fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef bt fill:#ede7f6,stroke:#673ab7,stroke-width:2px;
 
     subgraph "👁️ L1: 感知源数据 (Perception Source)"
-        BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector 大脑"]:::data
-        DepthMap["🌌 实时深度图 (32FC1)<br>来自 ros_gz_bridge"]:::data
-        CamInfo["📷 动态相机内参<br>(fx, fy, cx, cy)"]:::data
-        PX4Odom["🛸 PX4 里程计数据<br>【NED】"]:::data
+        BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector (1080p)"]:::data
+        DepthMap["🌌 实时深度图 (32FC1)<br>来自 Gazebo (480p)"]:::data
+        CamInfo["📷 动态相机内参<br>HD 分辨率 (fx, fy, cx, cy)"]:::data
+        PX4Odom["🛸 PX4 里程计数据<br>【NED 坐标系】"]:::data
     end
 
     subgraph "🌳 L2: 空间坐标树维护 (TF2 Broadcaster)"
-        NED2ENU["🔄 欧拉角物理映射<br>提取 FRD (Roll,Pitch,Yaw) → ENU FLU (Roll,-Pitch,π/2-Yaw)"]:::algo
-        TFMap["🌍 map<br>(地球绝对坐标系)【ENU】"]:::tf
+        NED2ENU["🔄 欧拉角绝对映射 (抗万向锁)<br>FRD → ENU FLU (Roll, -Pitch, π/2-Yaw)"]:::algo
+        TFMap["🌍 map<br>(地球绝对物理坐标系)【ENU】"]:::tf
         TFBase["🛸 base_link<br>(无人机本体)【FLU】"]:::tf
         TFCamera["📷 camera_link<br>(相机物理外壳)【FLU+平移】"]:::tf
         TFOptical["👁️ camera_optical_link<br>(OpenCV 光学坐标系)【RDF】"]:::tf
         
-        PX4Odom -->|"[1] 获取原始 NED 四元数"| NED2ENU
+        PX4Odom -->|"[1] 获取原生 NED 四元数"| NED2ENU
         
-        TFMap -.->|"[2] 发布动态 TF：FRD 欧拉角 → ENU 下 FLU 欧拉角 (Roll不变, Pitch取反, Yaw=π/2-yaw_ned)"| TFBase
+        TFMap -.->|"[2] 动态广播：ENU 下的 FLU 姿态"| TFBase
         NED2ENU -.->|"驱动"| TFMap
         
-        TFBase -.->|"[3] 发布静态平移 (机架外参)"| TFCamera
-        TFCamera -.->|"[4] 发布静态旋转 (FLU → RDF)"| TFOptical
+        TFBase -.->|"[3] 静态外参 (机架安装位移)"| TFCamera
+        TFCamera -.->|"[4] 静态旋转 (Roll=-π/2, Pitch=0, Yaw=-π/2)"| TFOptical
     end
 
     subgraph "🧠 L3: 视觉空间反解核心 (Camera Subscriber)"
+        LiteSORT["🔍 Lite-SORT 追踪<br>赋予目标稳定 ID"]:::algo
+        Rescale["⚖️ 跨维分辨率降采样<br>(1080p 坐标 → 480p 深度取样)"]:::algo
         MedianFilter["📏 5x5 中值滤波提取深度 Z"]:::algo
-        Pinhole["📐 针孔反投影<br>算出光学系 3D 坐标【RDF】"]:::algo
-        Transform["🔄 TF2 变换查询<br>⏱️ 时间轴对齐 (use_sim_time)<br>自动应用完整变换链补偿姿态"]:::algo
-        Kalman["🛡️ 线性卡尔曼滤波器<br>(仅在地球系过滤物理噪点)"]:::algo
+        Pinhole["📐 针孔反投影<br>算出光学系局部 3D 坐标【RDF】"]:::algo
+        Transform["🔄 TF2 绝对矩阵变换<br>⏱️ 锁定 msg->header.stamp<br>(时光倒流对齐飞机 Pitch 倾角)"]:::algo
+        Blacklist["🧠 空间黑名单校验<br>剔除周围 3m 内已拍目标"]:::algo
+        Gating["🚪 距离跳变门控<br>剔除单帧跳变 > 2.0m 的脏数据"]:::algo
+        Kalman["🛡️ 线性卡尔曼滤波器<br>平滑地球绝对坐标"]:::algo
         
-        BBox -->|"[5] 提供像素中心"| MedianFilter
-        DepthMap -->|"[5] 提供物理距离"| MedianFilter
+        BBox -->|"[5] MOT 关联"| LiteSORT
+        LiteSORT -->|"[6] 高清中心点"| Rescale
+        Rescale -->|"[7] 映射小图坐标"| MedianFilter
+        DepthMap -->|"[7] 提供物理测距"| MedianFilter
         
-        MedianFilter -->|"[6] 提取深度 Z"| Pinhole
-        CamInfo -->|"[6] 注入动态内参"| Pinhole
+        MedianFilter -->|"[8] 提取抗噪深度 Z"| Pinhole
+        CamInfo -->|"[8] 注入 HD 内参"| Pinhole
         
-        Pinhole -->|"[7] 赋予 TFOptical 坐标点"| Transform
-        TFOptical -.->|"[8] 提供系统树完整矩阵"| Transform
-        Transform -->|"[9] 映射出 Map 系地球坐标"| Kalman
+        Pinhole -->|"[9] 赋予 TFOptical 坐标点"| Transform
+        TFOptical -.->|"[10] 提供精准的位姿回溯矩阵"| Transform
+        
+        Transform -->|"[11] 映射 Map 系地球坐标"| Blacklist
+        Blacklist -->|"[12] 未被拉黑的新目标"| Gating
+        Gating -->|"[13] 物理过滤"| Kalman
     end
 
-    subgraph "📡 L4: 具身智能闭环输出"
-        Pub["📢 广播最纯净 3D 地球绝对坐标<br>(/vision/target_3d_position)"]:::ros
-        Kalman ==>|"[10] 输出平滑绝对坐标"| Pub
+    subgraph "📡 L4: 具身智能闭环调度 (Embodied Action)"
+        Pub["📢 广播纯净 3D 目标坐标<br>(/vision/target_3d_position)"]:::ros
+        BTNode["🌳 行为树调度中枢<br>打断巡航 -> 触发 HoverInspect 动作"]:::bt
+        Snap["📸 视觉伺服平稳悬停<br>异步存盘落图 + 追加空间黑名单"]:::bt
+        
+        Kalman ==>|"[14] 输出最优绝对坐标"| Pub
+        Pub ==>|"[15] 唤醒监听节点"| BTNode
+        BTNode ==>|"[16] 速度伺服急刹对准"| Snap
+        Snap -.->|"[17] 存图完毕，拉黑该区域"| Blacklist
     end
 ```
 - **5.视觉伺服闭环架构图 (Visual Servoing Architecture)**
