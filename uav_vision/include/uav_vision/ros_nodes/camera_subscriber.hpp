@@ -72,6 +72,9 @@ private:
     // =========================================================
     std::atomic<bool> trigger_snapshot_; // 拍照快门触发器
     std::string report_dir_;             // 巡检照片保存路径
+
+    int lost_counter_ = 0;   // 目标丢失帧数计数器
+    int glitch_counter_ = 0; // 脏数据/跳变帧数计数器
 };
 
 } // namespace uav_vision

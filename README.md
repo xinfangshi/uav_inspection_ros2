@@ -154,7 +154,7 @@ graph TD
 
     subgraph "👁️ L1: 感知源数据 (Perception Source)"
         BBox["🎯 2D 目标检测框 (u, v)<br>来自 IDetector (1080p)"]:::data
-        DepthMap["🌌 实时深度图 (32FC1)<br>来自 Gazebo (480p)"]:::data
+        DepthMap["🌌 实时深度图 (32FC1)<br>来自 Gazebo (480p, 包含 cx_d, cy_d)"]:::data
         CamInfo["📷 动态相机内参<br>HD 分辨率 (fx, fy, cx, cy)"]:::data
         PX4Odom["🛸 PX4 里程计数据<br>【NED 坐标系】"]:::data
     end
@@ -177,17 +177,17 @@ graph TD
 
     subgraph "🧠 L3: 视觉空间反解核心 (Camera Subscriber)"
         LiteSORT["🔍 Lite-SORT 追踪<br>赋予目标稳定 ID"]:::algo
-        Rescale["⚖️ 跨维分辨率降采样<br>(1080p 坐标 → 480p 深度取样)"]:::algo
+        Rescale["⚖️ 物理光学保真映射<br>(基于光心对齐的等比例空间投影)"]:::algo
         MedianFilter["📏 5x5 中值滤波提取深度 Z"]:::algo
-        Pinhole["📐 针孔反投影<br>算出光学系局部 3D 坐标【RDF】"]:::algo
-        Transform["🔄 TF2 绝对矩阵变换<br>⏱️ 锁定 msg->header.stamp<br>(时光倒流对齐飞机 Pitch 倾角)"]:::algo
-        Blacklist["🧠 空间黑名单校验<br>剔除周围 3m 内已拍目标"]:::algo
-        Gating["🚪 距离跳变门控<br>剔除单帧跳变 > 2.0m 的脏数据"]:::algo
+        Pinhole["📐 针孔反投影<br>使用 HD 内参算出 3D 坐标【RDF】"]:::algo
+        Transform["🔄 TF2 绝对矩阵变换<br>⏱️ 锁定 msg->header.stamp<br>(时光倒流对齐飞机真实 Pitch)"]:::algo
+        Blacklist["🧠 空间记忆黑名单<br>剔除周围 3m 内已拍目标"]:::algo
+        Gating["🚪 工业级状态门控<br>(>2.5m考察期拦截 / 短暂丢失惯性预测)"]:::algo
         Kalman["🛡️ 线性卡尔曼滤波器<br>平滑地球绝对坐标"]:::algo
         
         BBox -->|"[5] MOT 关联"| LiteSORT
         LiteSORT -->|"[6] 高清中心点"| Rescale
-        Rescale -->|"[7] 映射小图坐标"| MedianFilter
+        Rescale -->|"[7] 消除长宽比撕裂，输出纯净映射坐标"| MedianFilter
         DepthMap -->|"[7] 提供物理测距"| MedianFilter
         
         MedianFilter -->|"[8] 提取抗噪深度 Z"| Pinhole
@@ -198,7 +198,7 @@ graph TD
         
         Transform -->|"[11] 映射 Map 系地球坐标"| Blacklist
         Blacklist -->|"[12] 未被拉黑的新目标"| Gating
-        Gating -->|"[13] 物理过滤"| Kalman
+        Gating -->|"[13] 物理状态过滤"| Kalman
     end
 
     subgraph "📡 L4: 具身智能闭环调度 (Embodied Action)"
@@ -210,6 +210,7 @@ graph TD
         Pub ==>|"[15] 唤醒监听节点"| BTNode
         BTNode ==>|"[16] 速度伺服急刹对准"| Snap
         Snap -.->|"[17] 存图完毕，拉黑该区域"| Blacklist
+        Blacklist -.->|"[18] 瞬间斩断 KF 惯性记忆防连拍<br>(lost_counter=999)"| Kalman
     end
 ```
 - **5.视觉伺服闭环架构图 (Visual Servoing Architecture)**
@@ -221,10 +222,10 @@ graph TD
     classDef control fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
 
     subgraph "👁️ 1. 绝对目标定位 (Perception & TF2)"
-        AI["🎯 AI 识别 2D 像素<br/><b>camera_optical_link 系</b>"]:::vision
-        Depth["📏 提取深度 Z"]:::vision
-        TF2["🔄 TF2 空间树<br/>(已修复姿态矩阵连乘)<br/>camera_optical → map"]:::vision
-        KF["🛡️ 卡尔曼滤波平滑"]:::vision
+        AI["🎯 AI 识别 2D 像素<br/><b>1080p HD 分辨率</b>"]:::vision
+        Depth["📏 物理光学对齐提取深度 Z<br/>(映射至 480p SD 图)"]:::vision
+        TF2["🔄 TF2 时空穿梭树<br/>(已修复姿态矩阵万向锁)<br/>camera_optical → map"]:::vision
+        KF["🛡️ 3D 卡尔曼滤波中枢<br/>(含 Coasting 惯性预测 & 脏数据拦截)"]:::vision
         TargetCoord[/"📍 目标绝对地球坐标<br/>(Target_X, Target_Y) 在 <b>map</b> 系"/]:::vision
 
         AI --> Depth --> TF2 --> KF --> TargetCoord
@@ -232,7 +233,7 @@ graph TD
 
     subgraph "🛸 2. 无人机自身状态 (Self-Localization)"
         PX4Odom["🛰️ PX4 实时里程计<br/><b>NED 系</b>"]:::odom
-        NED2ENU["🔁 NED → ENU 直接转换<br/>(位置 & 航向)"]:::odom
+        NED2ENU["🔁 NED → ENU 欧拉角转换<br/>(消除 Pitch 反转)"]:::odom
         DroneCoord[/"🚁 飞机绝对地球坐标<br/>(Drone_X, Drone_Y, Current_Yaw) 在 <b>map</b> 系"/]:::odom
         
         PX4Odom -->|"原始 NED 数据"| NED2ENU -->|"map 系坐标"| DroneCoord
@@ -240,7 +241,7 @@ graph TD
 
     subgraph "🧠 3. 行为树中枢逻辑 (Blackboard & BT)"
         WriteBB["✍️ 写入黑板 (Blackboard)"]:::logic
-        CalcDist["📐 计算 2D 距离<br>Distance = sqrt(dX^2 + dY^2)"]:::logic
+        CalcDist["📐 计算 2D 水平距离<br>Distance = sqrt(dX^2 + dY^2)"]:::logic
         CalcYaw["🧭 计算目标偏航角<br>Target_Yaw = atan2(dY, dX) <b>在 map 系</b>"]:::logic
         
         TargetCoord -->|"触发警报"| WriteBB
@@ -251,19 +252,20 @@ graph TD
     end
 
     subgraph "🦾 4. 主动视觉伺服控制 (HoverInspect Action)"
-        StateBrake["🛑 阶段 1: 纯速度控制刹车<br>(V = 0, Yaw = 锁定当前)"]:::control
+        StateBrake["🛑 阶段 1: 纯速度控制防抖刹车<br>(V = 0, Yaw = 死锁刹车瞬间角度)"]:::control
         StateAlign["🎯 阶段 2: 柔性旋转对焦<br>(V = 0, Yaw = Target_Yaw <b>ENU</b>)"]:::control
-        ENU2NED["🔁 ENU → NED<br/>逆向转换"]:::control
-        StateShoot["📸 阶段 3: 高清曝光拍摄<br>(满足误差 < 5度, 驻留 3秒)"]:::control
-        Blacklist["🚫 目标拉黑去重<br>(加入 3 米屏蔽库)"]:::control
+        ENU2NED["🔁 ENU → NED<br/>逆向归一化转换"]:::control
+        StateShoot["📸 阶段 3: 高清曝光拍摄<br>(速度极小且角度误差 < 0.15 驻留)"]:::control
+        Blacklist["🚫 目标拉黑与记忆斩断<br>(加入 3 米屏蔽库 + 强杀 KF 惯性记忆)"]:::control
 
         CalcDist -->|"> 2.5m 允许转头"| StateBrake
         CalcYaw -->|"传入偏航角指令 (ENU)"| StateAlign
-        StateBrake -->|"速度 < 0.3m/s"| StateAlign
-        StateAlign -->|"稳定超过 1 秒"| StateShoot
-        StateAlign -.->|"高频控制指令 (ENU Yaw)"| ENU2NED
-        ENU2NED -.->|"NED Yaw"| PX4Odom
-        StateShoot -->|"拍摄落盘完成"| Blacklist
+        StateBrake -->|"速度 < 0.5m/s"| StateAlign
+        StateAlign -->|"机身彻底平稳 (连续50帧)"| StateShoot
+        StateAlign -.->|"高频速度 0 控制 + 偏航控制"| ENU2NED
+        ENU2NED -.->|"NED Yaw (已归一化)"| PX4Odom
+        StateShoot -->|"异步落盘完成"| Blacklist
+        Blacklist -.->|"🔴 触发 kf.reset() & lost=999 (防连拍)"| KF
     end
 ```
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*

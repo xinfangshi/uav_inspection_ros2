@@ -17,7 +17,7 @@ struct TrackedTarget {
 class LiteSORT {
 public:
     // max_age: 目标丢失多少帧后注销; min_hits: 连续看多少帧才信任; iou_threshold: IOU匹配阈值
-    LiteSORT(int max_age = 5, int min_hits = 3, float iou_threshold = 0.3);
+    LiteSORT(int max_age = 15, int min_hits = 1, float iou_threshold = 0.05);
 
     // 核心接口：输入一堆没名字的框，输出一堆带 ID 的追踪目标
     std::vector<TrackedTarget> update(const std::vector<cv::Rect>& detections);

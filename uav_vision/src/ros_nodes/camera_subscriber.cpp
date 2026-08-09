@@ -49,13 +49,18 @@ CameraSubscriber::CameraSubscriber(std::shared_ptr<IDetector> detector)
 
 void CameraSubscriber::inspected_callback(const geometry_msgs::msg::Point::SharedPtr msg)
 {
-    // 将新巡检完毕的目标追加至空间黑名单
     std::lock_guard<std::mutex> lock(memory_mutex_);
     inspected_targets_.push_back(Eigen::Vector3d(msg->x, msg->y, msg->z));
     RCLCPP_INFO(this->get_logger(), "🧠 [空间记忆] 目标 (X:%.2f, Y:%.2f, Z:%.2f) 已追加至视觉黑名单。", msg->x, msg->y, msg->z);
 
-    // 🔥 核心事件驱动：接收到控制端的完成信号，立即触发快门标志位！
+    // 触发异步落盘拍照
     trigger_snapshot_ = true;
+
+    // =========================================================
+    // 🔥 核心防连拍修复：瞬间斩断 KF 的“惯性失忆症”！
+    // =========================================================
+    kf_.reset();           // 强行清空卡尔曼滤波器的物理状态
+    lost_counter_ = 999;   // 强行拉爆丢失计数器，彻底阻断 COASTING 惯性广播逻辑！
 }
 
 void CameraSubscriber::camera_info_callback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
@@ -123,21 +128,24 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 int u = trk.bbox.x + trk.bbox.width / 2;
                 int v = trk.bbox.y + trk.bbox.height / 2;
 
-                // 🔥 核心修复 1：保护原始高清坐标，绝不能用 depth_frame 去截断它！
                 u = std::clamp(u, 0, rgb_frame.cols - 1);
                 v = std::clamp(v, 0, rgb_frame.rows - 1);
 
                 // =========================================================
-                // 🔥 核心修复 2：计算 1080p 到 480p 的空间降维缩放比例
+                // 🔥 核心修复：基于纯物理光学的保真映射 (消除长宽比撕裂)
                 // =========================================================
-                double scale_x = static_cast<double>(depth_frame.cols) / rgb_frame.cols;
-                double scale_y = static_cast<double>(depth_frame.rows) / rgb_frame.rows;
+                // 因为水平 FOV 对齐，且像素为正方形(fx=fy)，所以 X 和 Y 的光学缩放率必须绝对相等！
+                double optical_scale = static_cast<double>(depth_frame.cols) / rgb_frame.cols; // 640/1920 = 1/3
 
-                // 映射出在深度图 (640x480) 上的实际取样坐标
-                int depth_u = static_cast<int>(u * scale_x);
-                int depth_v = static_cast<int>(v * scale_y);
+                // 提取 Depth 相机的物理光心 (通常是深度图的正中心)
+                double cx_depth = depth_frame.cols / 2.0; // 320.0
+                double cy_depth = depth_frame.rows / 2.0; // 240.0
 
-                // 限制深度坐标点在图像边界内，防止数组越界
+                // 基于光心差值进行统一缩放映射 (确保查出来的深度，属于同一根光学射线！)
+                int depth_u = static_cast<int>((u - cx) * optical_scale + cx_depth);
+                int depth_v = static_cast<int>((v - cy) * optical_scale + cy_depth);
+
+                // 限制深度坐标点在边界内
                 depth_u = std::clamp(depth_u, 0, depth_frame.cols - 1);
                 depth_v = std::clamp(depth_v, 0, depth_frame.rows - 1);
 
@@ -275,8 +283,11 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                 }
             }
 
-            // 对优先级最高的主目标进行状态估计与数据广播
+// 对优先级最高的主目标进行状态估计与数据广播
             if (primary_id != -1) {
+                // 🔥 看到目标了，丢失计数器清零！
+                lost_counter_ = 0; 
+
                 cv::rectangle(rgb_frame, primary_bbox, cv::Scalar(0, 0, 255), 3);
                 cv::putText(rgb_frame, "LOCKED", cv::Point(primary_bbox.x, primary_bbox.y + primary_bbox.height + 20), 
                             cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 255), 2);
@@ -289,22 +300,36 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
 
                 if (!kf_.is_initialized()) {
                     kf_.init(best_raw_map_x, best_raw_map_y, best_raw_map_z);
+                    glitch_counter_ = 0; // 初始化时，清零脏数据计数器
                 } else {
                     // 提取 KF 当前的稳定状态
                     Eigen::Vector3d current_state = kf_.get_state();
                                 
-                // 计算新来的观测坐标，和当前稳定坐标的跳变距离
+                    // 计算新来的观测坐标，和当前稳定坐标的跳变距离
                     double jump_dist = std::sqrt(std::pow(best_raw_map_x - current_state.x(), 2) +
                                        std::pow(best_raw_map_y - current_state.y(), 2) +
                                        std::pow(best_raw_map_z - current_state.z(), 2));
 
-                    // 🔥 核心修复 2：如果一帧之内，坐标跳变超过 2.5 米，绝对是飞机急刹车引起的物理畸变！
-                    // 直接丢弃这个脏数据，拒绝融合！保护 KF 状态的纯洁性！
-                    if (jump_dist < 2.0) {
+                    // 🔥 核心修复 2：带有“考察期”的工业级跳变门控！
+                    if (jump_dist < 2.5) {
+                        // 跳变在允许范围内（2.5米以内），安全融合！
                         kf_.update(best_raw_map_x, best_raw_map_y, best_raw_map_z); 
+                        glitch_counter_ = 0; // 只要有一次正常数据，重置考察期
                     } else {
-                        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                            "🛡️ [KF 门控] 检测到姿态突变引发的坐标瞬移 (跳变 %.2fm)，强行剔除脏数据！", jump_dist);
+                        // 发现跳变异常！不能融合，先记一笔账
+                        glitch_counter_++;
+                        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 500, 
+                            "🛡️ [KF 门控] 拦截急刹姿态畸变！(跳变 %.2fm，持续 %d 帧)", jump_dist, glitch_counter_);
+                        
+                        // 💡 考察期满：如果连续 10 帧 (约0.3秒) 都在这个新位置，
+                        // 说明这不是急刹车畸变，而是真的发现了远处的新目标！
+                        if (glitch_counter_ > 10) {
+                            RCLCPP_WARN(this->get_logger(), "🔄 [状态切换] 确认目标发生真实转移，KF 重新对焦！");
+                            kf_.reset();
+                            kf_.init(best_raw_map_x, best_raw_map_y, best_raw_map_z);
+                            glitch_counter_ = 0;
+                        }
+                        // 如果在 10 帧以内，系统什么都不做，完全抛弃这个脏坐标，维持原判！
                     }
                 }
 
@@ -323,8 +348,28 @@ void CameraSubscriber::image_callback(const sensor_msgs::msg::Image::SharedPtr m
                     primary_id, target_3d_msg.x, target_3d_msg.y, target_3d_msg.z);
 
             } else {
-                target_3d_msg.z = -1.0;
-                kf_.reset(); // 目标丢失或切换时，重置卡尔曼滤波器状态
+                // =========================================================
+                // 🛡️ 容错退化：目标短暂丢失时，绝不立刻失忆！(解决刹车丢失重置 Bug)
+                // =========================================================
+                lost_counter_++; // 丢失计数器累加
+                
+                if (lost_counter_ > 15) {
+                    // 丢失超过 15 帧 (约 0.5 秒)，说明飞机真的飞走了，彻底放手
+                    target_3d_msg.z = -1.0;
+                    kf_.reset(); 
+                } 
+                else if (kf_.is_initialized()) {
+                    // 🔥 丢失在 15 帧以内 (急刹车模糊)，靠 KF 物理惯性继续死死输出已知位置！
+                    kf_.predict();
+                    Eigen::Vector3d coast_state = kf_.get_state();
+                    target_3d_msg.x = coast_state.x();
+                    target_3d_msg.y = coast_state.y();
+                    target_3d_msg.z = coast_state.z();
+                    
+                    // 在画面上提示“依靠惯性预测中”
+                    cv::putText(rgb_frame, "COASTING (Tracking Lost)", cv::Point(50, 50), 
+                                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 165, 255), 2);
+                }
             }
 
             // 📸 证据落盘 (保持异步存图原样不动)
