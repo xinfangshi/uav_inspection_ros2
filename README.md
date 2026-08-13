@@ -177,40 +177,42 @@ graph TD
 
     subgraph "🧠 L3: 视觉空间反解核心 (Camera Subscriber)"
         LiteSORT["🔍 Lite-SORT 追踪<br>赋予目标稳定 ID"]:::algo
+        Pruning["✂️ O(1) 算力剪枝卫士<br>(中央感应区过滤 + 铁血排他锁)"]:::algo
         Rescale["⚖️ 物理光学保真映射<br>(基于光心对齐的等比例空间投影)"]:::algo
         MedianFilter["📏 5x5 中值滤波提取深度 Z"]:::algo
-        Pinhole["📐 针孔反投影<br>使用 HD 内参算出 3D 坐标【RDF】"]:::algo
+        Pinhole["📐 针孔反投影<br>使用 HD 内参算出 3D 坐标【RDF】"]:::线
         Transform["🔄 TF2 绝对矩阵变换<br>⏱️ 锁定 msg->header.stamp<br>(时光倒流对齐飞机真实 Pitch)"]:::algo
         Blacklist["🧠 空间记忆黑名单<br>剔除周围 3m 内已拍目标"]:::algo
-        Gating["🚪 工业级状态门控<br>(>2.5m考察期拦截 / 短暂丢失惯性预测)"]:::algo
+        Gating["🚪 工业级状态门控<br>(10帧畸变拦截 / 40帧急刹惯性预测)"]:::algo
         Kalman["🛡️ 线性卡尔曼滤波器<br>平滑地球绝对坐标"]:::algo
         
         BBox -->|"[5] MOT 关联"| LiteSORT
-        LiteSORT -->|"[6] 高清中心点"| Rescale
-        Rescale -->|"[7] 消除长宽比撕裂，输出纯净映射坐标"| MedianFilter
-        DepthMap -->|"[7] 提供物理测距"| MedianFilter
+        LiteSORT -->|"[6] O(N) 遍历拦截"| Pruning
+        Pruning -->|"[7] 释放 90% 算力, 仅放行唯一合法目标"| Rescale
+        Rescale -->|"[8] 消除长宽比撕裂，输出纯净映射坐标"| MedianFilter
+        DepthMap -->|"[8] 提供物理测距"| MedianFilter
         
-        MedianFilter -->|"[8] 提取抗噪深度 Z"| Pinhole
-        CamInfo -->|"[8] 注入 HD 内参"| Pinhole
+        MedianFilter -->|"[9] 提取抗噪深度 Z"| Pinhole
+        CamInfo -->|"[9] 注入 HD 内参"| Pinhole
         
-        Pinhole -->|"[9] 赋予 TFOptical 坐标点"| Transform
-        TFOptical -.->|"[10] 提供精准的位姿回溯矩阵"| Transform
+        Pinhole -->|"[10] 赋予 TFOptical 坐标点"| Transform
+        TFOptical -.->|"[11] 提供精准的位姿回溯矩阵"| Transform
         
-        Transform -->|"[11] 映射 Map 系地球坐标"| Blacklist
-        Blacklist -->|"[12] 未被拉黑的新目标"| Gating
-        Gating -->|"[13] 物理状态过滤"| Kalman
+        Transform -->|"[12] 映射 Map 系地球坐标"| Blacklist
+        Blacklist -->|"[13] 未被拉黑的新目标"| Gating
+        Gating -->|"[14] 物理状态过滤"| Kalman
     end
 
     subgraph "📡 L4: 具身智能闭环调度 (Embodied Action)"
         Pub["📢 广播纯净 3D 目标坐标<br>(/vision/target_3d_position)"]:::ros
         BTNode["🌳 行为树调度中枢<br>打断巡航 -> 触发 HoverInspect 动作"]:::bt
-        Snap["📸 视觉伺服平稳悬停<br>异步存盘落图 + 追加空间黑名单"]:::bt
+        Snap["📸 视觉伺服平稳悬停<br>(含 3秒安全退让机制) / 异步落盘拉黑"]:::bt
         
-        Kalman ==>|"[14] 输出最优绝对坐标"| Pub
-        Pub ==>|"[15] 唤醒监听节点"| BTNode
-        BTNode ==>|"[16] 速度伺服急刹对准"| Snap
-        Snap -.->|"[17] 存图完毕，拉黑该区域"| Blacklist
-        Blacklist -.->|"[18] 瞬间斩断 KF 惯性记忆防连拍<br>(lost_counter=999)"| Kalman
+        Kalman ==>|"[15] 输出最优绝对坐标"| Pub
+        Pub ==>|"[16] 唤醒监听节点"| BTNode
+        BTNode ==>|"[17] 速度伺服急刹对准"| Snap
+        Snap -.->|"[18] 存图完毕，拉黑该区域"| Blacklist
+        Blacklist -.->|"[19] 瞬间斩断 KF 惯性记忆防连拍<br>(lost_counter=999 & 解开排他锁)"| Kalman
     end
 ```
 - **5.视觉伺服闭环架构图 (Visual Servoing Architecture)**
@@ -222,10 +224,10 @@ graph TD
     classDef control fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
 
     subgraph "👁️ 1. 绝对目标定位 (Perception & TF2)"
-        AI["🎯 AI 识别 2D 像素<br/><b>1080p HD 分辨率</b>"]:::vision
-        Depth["📏 物理光学对齐提取深度 Z<br/>(映射至 480p SD 图)"]:::vision
+        AI["🎯 AI 识别 & O(1) 剪枝<br/><b>1080p HD + 中央感应区 + 排他锁</b>"]:::vision
+        Depth["📏 物理光学对齐提取深度 Z<br/>(等比映射至 480p SD 图)"]:::vision
         TF2["🔄 TF2 时空穿梭树<br/>(已修复姿态矩阵万向锁)<br/>camera_optical → map"]:::vision
-        KF["🛡️ 3D 卡尔曼滤波中枢<br/>(含 Coasting 惯性预测 & 脏数据拦截)"]:::vision
+        KF["🛡️ 3D 卡尔曼滤波中枢<br/>(40帧 Coasting 惯性预测 & 脏数据拦截)"]:::vision
         TargetCoord[/"📍 目标绝对地球坐标<br/>(Target_X, Target_Y) 在 <b>map</b> 系"/]:::vision
 
         AI --> Depth --> TF2 --> KF --> TargetCoord
@@ -255,17 +257,17 @@ graph TD
         StateBrake["🛑 阶段 1: 纯速度控制防抖刹车<br>(V = 0, Yaw = 死锁刹车瞬间角度)"]:::control
         StateAlign["🎯 阶段 2: 柔性旋转对焦<br>(V = 0, Yaw = Target_Yaw <b>ENU</b>)"]:::control
         ENU2NED["🔁 ENU → NED<br/>逆向归一化转换"]:::control
-        StateShoot["📸 阶段 3: 高清曝光拍摄<br>(速度极小且角度误差 < 0.15 驻留)"]:::control
-        Blacklist["🚫 目标拉黑与记忆斩断<br>(加入 3 米屏蔽库 + 强杀 KF 惯性记忆)"]:::control
+        StateShoot["📸 阶段 3: 高清曝光拍摄<br>(连续50帧完美对焦 或 <b>触发3秒安全退让</b>)"]:::control
+        Blacklist["🚫 目标拉黑与记忆斩断<br>(加入 3 米屏蔽库 + 强杀 KF 惯性 + 解锁)"]:::control
 
         CalcDist -->|"> 2.5m 允许转头"| StateBrake
         CalcYaw -->|"传入偏航角指令 (ENU)"| StateAlign
         StateBrake -->|"速度 < 0.5m/s"| StateAlign
-        StateAlign -->|"机身彻底平稳 (连续50帧)"| StateShoot
+        StateAlign -->|"机身彻底平稳 / 触发退让阈值"| StateShoot
         StateAlign -.->|"高频速度 0 控制 + 偏航控制"| ENU2NED
         ENU2NED -.->|"NED Yaw (已归一化)"| PX4Odom
         StateShoot -->|"异步落盘完成"| Blacklist
-        Blacklist -.->|"🔴 触发 kf.reset() & lost=999 (防连拍)"| KF
+        Blacklist -.->|"🔴 触发 kf.reset() & lost=999 & 释放排他锁"| KF
     end
 ```
 *(注：此处将在后续补充详细的 ROS 2 Node Graph 架构图)*

@@ -56,6 +56,8 @@ private:
     // 🔥 新增：用于死死锁住警报触发瞬间的目标真实坐标！
     double locked_defect_x_, locked_defect_y_, locked_defect_z_;
 
+    int aligning_ticks_;
+
 };
 
 }

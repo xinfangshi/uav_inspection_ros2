@@ -56,6 +56,8 @@ BT::NodeStatus HoverInspectAction::onStart() {
     if (!odom_received_) return BT::NodeStatus::RUNNING;
 
     brake_yaw_ = current_yaw_;
+
+    aligning_ticks_ = 0;
     
     // 🔥 核心修复 1A：在打断的第 0 毫秒，立刻读取并锁死目标坐标！
     if (config().blackboard->get<double>("defect_x", locked_defect_x_) && 
@@ -112,20 +114,41 @@ BT::NodeStatus HoverInspectAction::onRunning() {
     // 🛡️ 阶段 2：姿态稳定校验 (Pure Velocity Control + Yaw Alignment)
     // =========================================================
     else if (current_state_ == ALIGNING) {
-        // 🔥 终极修复 3：彻底抛弃位置控制！全程使用速度 0 悬停，防止钟摆效应！
-        publish_offboard_control_mode(false, true); // 关位置，开速度
-        publish_trajectory_setpoint(0.0, 0.0, 0.0, target_yaw_, true); // 速度为0，缓慢转机头
+        publish_offboard_control_mode(false, true); 
+        publish_trajectory_setpoint(0.0, 0.0, 0.0, target_yaw_, true); 
 
-        // 🔥 核心防抖算法：必须连续 50 帧 (1秒) 速度和偏航角都极小，才算彻底平稳！
-        if (speed < 0.2f && yaw_error < 0.15f) {
-            stable_hold_counter_++;
-        } else {
-            stable_hold_counter_ = 0; // 只要晃动一下，立刻重新倒计时！
+        // 🔥 引入“耐心计时器”：记录我们在对焦阶段卡了多久
+        aligning_ticks_++; 
+
+        // 默认的完美主义标准 (速度极慢，偏航极准)
+        float speed_threshold = 0.2f;
+        float yaw_threshold = 0.15f; 
+
+        // =========================================================
+        // 🚀 核心优化：安全退让机制 (Fallback Margin)
+        // 如果对焦超过 150 帧 (约 3 秒) 还没彻底平稳，不要死磕！
+        // 主动放宽容忍度，只要在视野内就强行拍完拉黑，迅速脱离复杂环境！
+        // =========================================================
+        if (aligning_ticks_ > 150) {
+            speed_threshold = 0.5f;   // 允许稍微有点漂移
+            yaw_threshold = 0.40f;    // 允许偏航角有 23 度的误差 (目标只要在画面里就行)
+            
+            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, 
+                "⚠️ [视觉伺服] 遭遇复杂环境，触发安全退让机制！强制放宽拍摄标准！");
         }
 
+        // 校验当前姿态是否满足阈值
+        if (speed < speed_threshold && yaw_error < yaw_threshold) {
+            stable_hold_counter_++;
+        } else {
+            stable_hold_counter_ = 0; // 只要晃动超出阈值，重新计算连续帧
+        }
+
+        // 连续 50 帧达标，切入拍摄阶段
         if (stable_hold_counter_ > 50) {
             current_state_ = SHOOTING;
-            RCLCPP_INFO(node_->get_logger(), "🎯 [视觉伺服] 机身彻底平稳！[阶段3] 锁定目标，开始高清曝光拍摄...");
+            aligning_ticks_ = 0; // 清空耐心计时器
+            RCLCPP_INFO(node_->get_logger(), "🎯 [视觉伺服] 对焦确认！[阶段3] 锁定目标，开始高清曝光拍摄...");
         }
     }
     // =========================================================

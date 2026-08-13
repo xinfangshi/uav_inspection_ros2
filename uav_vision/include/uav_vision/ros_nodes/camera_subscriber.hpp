@@ -75,6 +75,7 @@ private:
 
     int lost_counter_ = 0;   // 目标丢失帧数计数器
     int glitch_counter_ = 0; // 脏数据/跳变帧数计数器
+    int locked_target_id_ = -1;  // 🔥 新增：用于死死咬住目标的“追踪锁”
 };
 
 } // namespace uav_vision
